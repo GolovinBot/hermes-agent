@@ -174,7 +174,9 @@ def existing_delivery_session(store, platform: str, chat_id: str, thread_id: Opt
             continue
         if expected.get("scope_id") and address.scope_id != expected["scope_id"]:
             continue
-        if expected.get("profile") and store._profile_from_session_key(entry.session_key) != expected["profile"]:
+        profile = (store._profile_from_session_key(entry.session_key) if store.config.multiplex_profiles
+                   else store._active_profile_name())
+        if expected.get("profile") and profile != expected["profile"]:
             continue
         shared = is_shared_multi_user_session(
             source, group_sessions_per_user=store.config.group_sessions_per_user,

@@ -1678,6 +1678,12 @@ def _deliver_standalone(
     job = t.job
     captured = t.origin.get("conversation") if t.origin_target else None
     address = captured.get("address", {}) if isinstance(captured, dict) else {}
+    if address.get("profile"):
+        from hermes_cli.profiles import get_active_profile_name
+        current_profile = get_active_profile_name() or "default"
+        if address["profile"] != current_profile:
+            _note_target_error(job, "Cron origin belongs to another runtime profile; refusing its standalone token", delivery_errors)
+            return
     if address.get("account") and address.get("account") != address.get("profile"):
         _note_target_error(job, "The receiving bot belongs to another profile; a live gateway is required", delivery_errors)
         return

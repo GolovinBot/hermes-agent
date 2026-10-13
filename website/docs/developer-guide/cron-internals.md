@@ -39,7 +39,10 @@ mirror. Missing or ambiguous evidence skips continuation with a warning; deliver
 the configured target. Account/profile mismatches in a captured origin refuse delivery. A different receiving bot
 requires its live gateway. The gateway's existing receiving-owner resolver selects that bot,
 even when the runtime profile owns a different bot; an offline receiver refuses delivery.
-Standalone delivery never borrows another profile's credentials.
+Standalone delivery never borrows another profile's credentials. A captured runtime profile must
+match the bound standalone runtime before any payload is submitted. A standalone `agent:main`
+key retains its historical spelling; the owning runtime supplies its profile for exact mirroring,
+rather than interpreting `main` as a promise that the profile is `default`.
 Slack workspace scope reaches both text and media sends. A native standalone Slack sender checks
 token ownership with `auth.test` before submitting any payload to a scoped target.
 
