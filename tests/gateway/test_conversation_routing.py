@@ -138,3 +138,22 @@ async def test_captured_origin_requires_matching_receiving_identity(tmp_path, re
     adapter._canonicalize.side_effect = canonicalize
     with pytest.raises(PermissionError):
         await resolve_delivery_source(adapter, "matrix", source.chat_id, None, origin)
+
+
+@pytest.mark.parametrize("stored_profile", [None, "ops", "default"])
+def test_child_captures_standalone_runtime_profile(tmp_path, monkeypatch, stored_profile):
+    from gateway.session_context import clear_session_vars, set_session_vars
+    from tools.cronjob_job_args import _origin_from_env
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "profile"))
+    config = GatewayConfig(multiplex_profiles=False)
+    source = SessionSource(Platform.MATRIX, "!room:example.org", chat_type="dm", profile=stored_profile)
+    entry = SessionStore(config.sessions_dir, config).get_or_create_session(source)
+    monkeypatch.setattr("gateway.config.load_gateway_config", lambda: config)
+    tokens = set_session_vars(platform="matrix", chat_id=source.chat_id, chat_type="dm",
+                              session_key=entry.session_key, profile="ops")
+    try:
+        origin = _origin_from_env()
+        assert origin["conversation"]["address"]["profile"] == "ops"
+    finally:
+        clear_session_vars(tokens)

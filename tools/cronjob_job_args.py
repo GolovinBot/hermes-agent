@@ -130,7 +130,10 @@ def _origin_from_env(
         origin["chat_id"] = source.parent_chat_id or source.chat_id
         if entry is not None:
             origin["conversation"]["address"]["account"] = entry.transport_profile
-            origin["conversation"]["address"]["profile"] = store._profile_from_session_key(entry.session_key)
+            # Standalone gateways retain agent:main even when launched as a named profile.
+            origin["conversation"]["address"]["profile"] = (
+                store._profile_from_session_key(entry.session_key) if config.multiplex_profiles
+                else origin["profile"] or source.profile)
     return origin
 
 
