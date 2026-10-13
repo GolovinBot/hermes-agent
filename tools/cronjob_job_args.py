@@ -58,8 +58,8 @@ def _first_fire_within_thread_horizon(
 
 def _origin_from_env(
     schedule: str | dict[str, Any] | None = None,
-) -> Optional[dict[str, str]]:
-    from gateway.session_context import async_delivery_supported, get_session_env
+) -> Optional[dict[str, Any]]:
+    from gateway.session_context import async_delivery_supported, get_session_env, get_session_source
     origin_platform = get_session_env("HERMES_SESSION_PLATFORM")
     origin_chat_id = get_session_env("HERMES_SESSION_CHAT_ID")
     if not (origin_platform and origin_chat_id):
@@ -96,7 +96,7 @@ def _origin_from_env(
         logger.debug(
             "Cron origin captured thread_id=%s for %s:%s",
             thread_id, origin_platform, origin_chat_id)
-    return {
+    origin = {
         "platform": origin_platform, "chat_id": origin_chat_id,
         "chat_name": get_session_env("HERMES_SESSION_CHAT_NAME") or None, "thread_id": thread_id,
         # Lets a delivery mirror resolve the participant's session in per-user-isolated groups.
@@ -104,7 +104,34 @@ def _origin_from_env(
         # Workspace/server scope (Slack team, Discord guild...): Slack session keys embed it,
         # so a continuable cron seed built without it would never resolve a scoped reply.
         "scope_id": get_session_env("HERMES_SESSION_SCOPE_ID") or None,
+        "chat_type": get_session_env("HERMES_SESSION_CHAT_TYPE") or None,
+        "user_id_alt": get_session_env("HERMES_SESSION_USER_ID_ALT") or None,
+        "parent_chat_id": get_session_env("HERMES_SESSION_PARENT_CHAT_ID") or None,
+        "profile": get_session_env("HERMES_SESSION_PROFILE") or None,
     }
+    source = get_session_source()
+    entry = None
+    session_key = get_session_env("HERMES_SESSION_KEY")
+    if source is None and session_key:
+        from gateway.config import load_gateway_config
+        from gateway.session import SessionStore
+        config = load_gateway_config()
+        store = SessionStore(config.sessions_dir, config)
+        entry = store.lookup_by_session_key(session_key)
+        if entry is None or entry.origin is None:
+            raise ValueError("Cannot recover the cron conversation from its durable session key")
+        source = entry.origin
+        if source is not None and (source.platform.value, str(source.chat_id), source.thread_id or "") != (
+                origin_platform, str(origin_chat_id), get_session_env("HERMES_SESSION_THREAD_ID")):
+            raise ValueError("Cron origin does not match the durable session address")
+    if source is not None:
+        from gateway.conversation import conversation_origin
+        origin["conversation"] = conversation_origin(source, thread_id=thread_id)
+        origin["chat_id"] = source.parent_chat_id or source.chat_id
+        if entry is not None:
+            origin["conversation"]["address"]["account"] = entry.transport_profile
+            origin["conversation"]["address"]["profile"] = store._profile_from_session_key(entry.session_key)
+    return origin
 
 
 def _local_delivery_notice(job: dict[str, Any], user_deliver: Optional[str]) -> Optional[str]:

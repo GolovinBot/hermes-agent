@@ -13,10 +13,37 @@ The cron subsystem provides scheduled task execution — from simple one-shot de
 | File | Purpose |
 |------|---------|
 | `cron/jobs.py` | Job model, storage, atomic read/write to `jobs.json` |
+| `cron/scheduler_sessions.py` | Resolve and seed reply-facing continuation sessions after confirmed delivery |
+| `gateway/conversation.py` | Normalized conversation address, kind and legacy compatibility |
 | `cron/scheduler.py` | Scheduler loop — due-job detection, execution, repeat tracking |
 | `tools/cronjob_tools.py` | Model-facing `cronjob_manage` tool registration and handler |
 | `gateway/run.py` | Gateway integration — cron ticking in the long-running loop |
 | `hermes_cli/cron.py` | CLI `hermes cron` subcommands |
+
+## Continuation routing
+
+A conversation address contains the platform, receiving bot account, runtime profile, workspace
+or server scope, parent room/channel, and optional thread. Conversation kind (`dm`, `group`,
+`channel`) and the configured participant-isolation policy are separate from that address.
+`chat_type="thread"` remains a legacy adapter/key spelling, not a conversation kind.
+
+New gateway-created origins store a versioned `conversation` snapshot alongside the legacy flat
+fields. Cron resolves a reply-facing `SessionSource` and uses the same `SessionStore` and
+`build_session_key()` path as inbound messages. It mirrors to the exact resulting session ID,
+never by a most-recent-chat guess. Group and thread isolation are independent settings; an
+isolated seed needs the scheduling participant, including a stable alternative user ID.
+
+Legacy origins obtain their kind from the live adapter. Without one, only a single persisted
+session matching the exact room, thread, scope, account and permitted participant can receive a
+mirror. Missing or ambiguous evidence skips continuation with a warning; delivery still follows
+the configured target. Account/profile mismatches in a captured origin refuse delivery.
+
+Historical key spellings remain compatible. A shared receiving bot routed into another runtime
+adds `:account:<transport_profile>` to distinguish it from that runtime's own bot. An exact legacy
+key can move to this spelling only when its persisted receiving account proves ownership and
+there is no destination collision. Its session ID/history is retained; histories are never merged.
+Unknown ownership starts a separate lane. Matrix rooms formerly misclassified by member count
+also start a separate group lane, retaining their old DM transcript.
 
 ## Scheduling Model
 

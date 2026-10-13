@@ -247,7 +247,7 @@ async def test_get_chat_info_local_fallback_when_not_advertised():
         transport=t,
     )
     info = await a.get_chat_info("chan-1")
-    assert info == {"name": "chan-1", "type": "dm"}
+    assert info == {"name": "chan-1", "type": "unknown"}
     assert t.calls == []
 
 

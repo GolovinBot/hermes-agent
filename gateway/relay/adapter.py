@@ -1712,7 +1712,7 @@ class RelayAdapter(BasePlatformAdapter):
         # Op-gated so a legacy connector (which would only answer "unsupported op")
         # gets the same local fallback without a round trip.
         if self._transport is None or not self.descriptor.supports_op("get_chat_info"):
-            return {"name": chat_id, "type": "dm"}
+            return {"name": chat_id, "type": "unknown"}
         return await self._transport.get_chat_info(chat_id)
 
     async def send_follow_up(

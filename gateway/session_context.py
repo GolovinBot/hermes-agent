@@ -55,6 +55,12 @@ _SESSION_ASYNC_DELIVERY = ContextVar("HERMES_SESSION_ASYNC_DELIVERY", default=_U
 # Request-local proof that the client resumes SessionDB history. No env fallback
 # or child-process export: a bound id alone cannot authorize detached delivery.
 _SESSION_HISTORY_DELIVERY = ContextVar("HERMES_SESSION_HISTORY_DELIVERY", default=_UNSET)
+_SESSION_ROUTING_SOURCE = ContextVar("session_routing_source", default=None)
+
+
+def get_session_source():
+    """Trusted, task-local source; never restored from child-process environment variables."""
+    return _SESSION_ROUTING_SOURCE.get()
 
 # Cron auto-delivery vars, set per-job in run_job() so concurrent jobs don't clobber.
 _CRON_AUTO_DELIVER_PLATFORM = ContextVar("HERMES_CRON_AUTO_DELIVER_PLATFORM", default=_UNSET)
@@ -120,6 +126,7 @@ def set_session_vars(
     browser_control_transport_family: str = "", cwd: str = "", async_delivery: bool = True,
     ui_session_id: str = "", cron_session: Any = _UNSET, parent_chat_id: str = "",
     session_history_delivery: str | None = None,
+    routing_source: Any = None,
 ) -> list:
     """Set all session context variables and return reset tokens.  Call
     ``clear_session_vars(tokens)`` in a ``finally``; not nestable, clearing resets every var
@@ -132,6 +139,7 @@ def set_session_vars(
     cannot grant wake authority."""
     global _session_context_engaged
     _session_context_engaged = True
+    _SESSION_ROUTING_SOURCE.set(routing_source)
     values = (
         platform, source, chat_id, chat_type, chat_name, thread_id, user_id, user_id_alt,
         user_name, scope_id, session_key, session_id, ui_session_id, message_id, profile,
@@ -150,6 +158,7 @@ def clear_session_vars(tokens: list) -> None:
     goes back to ``_UNSET``: a cleared context is default-supported, not opted-out.  Wake
     capability goes back to ``_UNSET`` too — but for the opposite reason: a cleared context has
     declared nothing, and an undeclared capability FAILS CLOSED (#98619)."""
+    _SESSION_ROUTING_SOURCE.set(None)
     for var in _SESSION_VARS:
         var.set("")
     _SESSION_ASYNC_DELIVERY.set(_UNSET)
@@ -163,6 +172,7 @@ def reset_session_vars() -> None:
     task inherits A's already-set vars and a subprocess spawned before B binds would read A's
     identity.  ``_SESSION_ASYNC_DELIVERY`` and ``_SESSION_HISTORY_DELIVERY`` (outside ``_VAR_MAP``)
     are reset explicitly too."""
+    _SESSION_ROUTING_SOURCE.set(None)
     for var in _VAR_MAP.values():
         var.set(_UNSET)
     _SESSION_ASYNC_DELIVERY.set(_UNSET)
