@@ -72,6 +72,29 @@ def source_for_address(address: ConversationAddress, kind: str, **fields):
     )
 
 
+def receiving_adapter_for_origin(adapter, platform: str, chat_id: str, origin: dict):
+    """A captured receiver takes precedence over the runtime profile's own bot."""
+    captured = origin.get("conversation")
+    if (not isinstance(captured, dict) or captured.get("version") != 1
+            or origin.get("platform") != platform
+            or str(origin.get("parent_chat_id") or origin.get("chat_id", "")) != str(chat_id)):
+        return adapter
+    address = ConversationAddress(**captured["address"])
+    runner = getattr(adapter, "gateway_runner", None)
+    if not address.account or not getattr(getattr(runner, "config", None), "multiplex_profiles", False):
+        return adapter
+    if (address.platform, address.chat_id) != (platform, str(chat_id)):
+        raise PermissionError("Cron conversation address disagrees with its delivery target")
+    from gateway.session_identity import restore_identity
+    source = source_for_address(address, captured["kind"], user_id=origin.get("user_id"),
+                                user_id_alt=origin.get("user_id_alt"))
+    restore_identity(source, runner=runner, transport_profile=address.account)
+    receiving = runner._delivery_adapter_for(source)
+    if receiving is None:
+        raise PermissionError("The cron conversation's receiving bot is offline; another bot cannot replace it")
+    return receiving
+
+
 async def resolve_delivery_source(adapter, platform: str, chat_id: str, thread_id: Optional[str], origin: dict):
     """Resolve a reply-facing source through the receiving adapter; ambiguous legacy origins refuse."""
     from gateway.session_identity import identity_of

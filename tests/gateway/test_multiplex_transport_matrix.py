@@ -154,3 +154,32 @@ def test_restored_rows_fail_closed_on_intake_and_deliver_only_via_a_unique_owner
     bare = SessionSource(platform=Platform.TELEGRAM, chat_id="42", chat_type="dm", user_id="42")
     assert solo.runner._intake_adapter_for(bare) is solo.runner._delivery_adapter_for(bare) is solo.primary
     assert solo.runner._intake_adapter_for(None) is None and solo.runner._delivery_adapter_for(None) is None
+
+
+@pytest.mark.parametrize("receiver_online", [True, False])
+@pytest.mark.parametrize("inverse", [False, True])
+def test_cron_origin_selects_its_receiving_bot_before_the_runtime_bot(mux, receiver_online, inverse):
+    from cron.scheduler_delivery import _resolve_target_transport
+    from gateway.conversation import conversation_origin
+
+    receiver, runtime_bot, chat_id = ((mux.team_b, mux.primary, "999") if inverse
+                                      else (mux.primary, mux.team_b, "555"))
+    source, _ = _live(mux, receiver, chat_id, transport_profile="team_b" if inverse else "default")
+    origin = {**source.to_dict(), "conversation": conversation_origin(source, thread_id=None)}
+    job = {"id": "digest", "origin": origin}
+    target = {"platform": "telegram", "chat_id": chat_id}
+    if not receiver_online:
+        if inverse:
+            mux.runner._profile_adapters["team_b"] = {}
+        else:
+            mux.runner.adapters = {}
+    resolved, error = _resolve_target_transport(
+        job, Platform.TELEGRAM, "telegram", target,
+        {Platform.TELEGRAM: runtime_bot}, mux.runner.config)
+    if receiver_online:
+        assert error is None
+        assert resolved[2] is receiver
+        assert resolved[3][Platform.TELEGRAM] is receiver
+    else:
+        assert resolved is None
+        assert error

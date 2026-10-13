@@ -1302,6 +1302,17 @@ def _resolve_target_transport(
             pconfig = PlatformConfig(enabled=True)
     elif not pconfig or not pconfig.enabled:
         return None, f"platform '{platform_name}' not configured/enabled"
+    if transport is not None and not transport.is_relay:
+        from gateway.conversation import receiving_adapter_for_origin
+        try:
+            receiving = receiving_adapter_for_origin(
+                runtime_adapter, platform_name, target["chat_id"], _resolve_origin(job) or {})
+        except (PermissionError, ValueError, KeyError, TypeError) as exc:
+            return None, str(exc)
+        if receiving is not runtime_adapter:
+            runtime_adapter = receiving
+            target_adapters = {platform: receiving}
+            transport = DeliveryTransport(receiving, pconfig, platform)
     return (transport, pconfig, runtime_adapter, target_adapters), None
 
 
