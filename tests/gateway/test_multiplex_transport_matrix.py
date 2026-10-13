@@ -183,3 +183,15 @@ def test_cron_origin_selects_its_receiving_bot_before_the_runtime_bot(mux, recei
     else:
         assert resolved is None
         assert error
+
+
+def test_restored_receiver_never_becomes_a_shared_satellite_when_its_bot_goes_offline(mux):
+    from dataclasses import replace
+    from gateway.session_identity import restore_identity
+
+    source, _ = _live(mux, mux.team_b, "999", transport_profile="team_b")
+    restored = replace(source)  # Durable origins have no live provenance.
+    restore_identity(restored, runner=mux.runner, transport_profile="team_b")
+    mux.runner._profile_adapters["team_b"] = {}
+    assert mux.runner._intake_adapter_for(restored) is None
+    assert mux.runner._delivery_adapter_for(restored) is None
