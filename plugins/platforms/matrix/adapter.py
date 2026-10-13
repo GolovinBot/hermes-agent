@@ -1427,7 +1427,8 @@ class MatrixAdapter(BasePlatformAdapter):
 
     async def get_chat_info(self, chat_id: str) -> dict[str, Any]:
         identity = await self._resolve_room_identity(chat_id)
-        return {"name": identity.display_name, "type": "dm" if identity.chat_type == "dm" else "group"}
+        return {"name": identity.display_name, "type": "dm" if identity.chat_type == "dm" else "group",
+                "scope_id": identity.server_name}
 
     def get_diagnostics(self) -> dict[str, Any]:
         now = time.time()

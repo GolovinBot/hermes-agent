@@ -96,3 +96,45 @@ def test_child_origin_recovers_account_from_the_exact_durable_lane(tmp_path, mon
         assert origin["conversation"]["kind"] == "group"
     finally:
         clear_session_vars(tokens)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", [None, "workspace"])
+async def test_legacy_slack_origin_needs_authoritative_workspace_scope(scope):
+    adapter = MagicMock()
+    adapter.get_chat_info = AsyncMock(return_value={"type": "group", "scope_id": scope})
+    origin = {"platform": "slack", "chat_id": "C1", "user_id": "alice"}
+    if scope is None:
+        with pytest.raises(ValueError, match="workspace scope"):
+            await resolve_delivery_source(adapter, "slack", "C1", "root", origin)
+    else:
+        source = await resolve_delivery_source(adapter, "slack", "C1", "root", origin)
+        reply = SessionSource(Platform.SLACK, "C1", chat_type="group", user_id="alice",
+                              thread_id="root", scope_id=scope)
+        assert build_session_key(source) == build_session_key(reply)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rejection", ["version", "address", "account", "profile", "unserved"])
+async def test_captured_origin_requires_matching_receiving_identity(tmp_path, rejection):
+    from gateway.conversation import conversation_origin
+
+    source = SessionSource(Platform.MATRIX, "!room:example.org", chat_type="dm", profile="runtime")
+    source._identity = RoutingIdentity("receiver", "runtime", tmp_path, tmp_path)
+    origin = {"platform": "matrix", "chat_id": source.chat_id,
+              "conversation": conversation_origin(source, thread_id=None)}
+    if rejection == "version":
+        origin["conversation"]["version"] = 99
+    elif rejection == "address":
+        origin["conversation"]["address"]["chat_id"] = "!other:example.org"
+    elif rejection in {"account", "profile"}:
+        origin["conversation"]["address"][rejection] = "other"
+
+    def canonicalize(resolved):
+        resolved._identity = source._identity
+        resolved.profile_route_rejected = rejection == "unserved"
+
+    adapter = MagicMock()
+    adapter._canonicalize.side_effect = canonicalize
+    with pytest.raises(PermissionError):
+        await resolve_delivery_source(adapter, "matrix", source.chat_id, None, origin)

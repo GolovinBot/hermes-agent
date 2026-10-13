@@ -649,7 +649,7 @@ class QQAdapter(OwnAccessPolicyMixin, BasePlatformAdapter):
         it takes no part in any authorization decision, so any non-empty
         value is accepted and every later slot keeps its position.
         """
-        parts = str(session_key or "").split(":")
+        parts = str(session_key or "").partition(":account~:")[0].split(":")
         if len(parts) < 5 or parts[0] != "agent" or not parts[1]:
             return None
         parsed = {"platform": parts[2], "chat_type": parts[3], "chat_id": parts[4]}

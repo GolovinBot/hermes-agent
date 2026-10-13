@@ -101,6 +101,10 @@ class SessionSource:
     conversation_kind: Optional[str] = None  # legacy chat_type may encode a thread's key layout
 
     def __post_init__(self) -> None:
+        if self.conversation_kind is not None:
+            from gateway.conversation import conversation_kind
+            if (conversation_kind(self.conversation_kind) == "dm") != (conversation_kind(self.chat_type) == "dm"):
+                raise ValueError("Conversation kind cannot override the source's DM isolation")
         # Mirror scope_id/guild_id onto each other (scope_id wins) so readers of EITHER agree.
         if self.scope_id is None and self.guild_id is not None:
             self.scope_id = self.guild_id
@@ -649,10 +653,10 @@ def is_shared_multi_user_session(
 ) -> bool:
     """True when a non-DM session is shared across participants (mirrors the
     isolation rules in :func:`build_session_key`)."""
-    from gateway.conversation import conversation_kind
-    if conversation_kind(source.conversation_kind or source.chat_type) == "dm":
+    if (source.conversation_kind or source.chat_type) in {"dm", "private", "c2c"}:
         return False
-    return not (thread_sessions_per_user if source.thread_id else group_sessions_per_user)
+    from gateway.conversation import address_of
+    return not (thread_sessions_per_user if address_of(source).thread_id else group_sessions_per_user)
 
 
 def _session_key_namespace(profile: Optional[str]) -> str:
@@ -696,10 +700,11 @@ def build_session_key(
     session per platform. Groups add the participant id only when ``group_sessions_per_user`` and
     not in a thread (threads are shared unless ``thread_sessions_per_user``).
     """
-    from gateway.conversation import address_of, conversation_kind
+    from gateway.conversation import address_of
 
     address = address_of(source)
-    is_dm = conversation_kind(getattr(source, "conversation_kind", None) or source.chat_type) == "dm"
+    # Keep the participant layout of legacy wire kinds, alongside their existing key spelling.
+    is_dm = source.chat_type == "dm"
     chat_id = source.chat_id
     if is_dm and source.platform == Platform.WHATSAPP:
         chat_id = canonical_whatsapp_identifier(chat_id)
@@ -731,7 +736,7 @@ def build_session_key(
     # A shared bot and a profile's own bot can address the same room in one runtime.
     account = transport_profile_of(source)
     if account and address.profile and account != address.profile:
-        parts += ["account", account]
+        parts += ["account~", account]
     return ":".join(str(part) for part in parts)
 
 
@@ -947,6 +952,7 @@ class SessionStore(
         session_key = self._generate_session_key(source)
         now = _now()
         if not force_new:
+            self._preserve_foreign_account_entry(source, session_key)
             self._adopt_legacy_account_entry(source, session_key)
             self._adopt_legacy_slack_entry(source, session_key)
 

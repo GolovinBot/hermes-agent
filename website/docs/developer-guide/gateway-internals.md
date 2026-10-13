@@ -84,7 +84,7 @@ Thread-aware platforms (Telegram forum topics, Discord threads, Slack threads) m
 
 `ConversationAddress` keeps parent room/channel and optional thread separate from conversation
 kind. Session isolation remains a `GatewayConfig` policy. Legacy key spellings are preserved;
-shared bots routed into another runtime append `:account:<transport_profile>` so different
+shared bots routed into another runtime append `:account~:<transport_profile>` so different
 receiving bots cannot share a transcript. Only a legacy lane with a matching persisted
 `transport_profile` is rekeyed; unknown ownership is retained separately. See
 [Cron continuation routing](cron-internals.md#continuation-routing) for origin compatibility.

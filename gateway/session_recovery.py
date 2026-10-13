@@ -113,8 +113,30 @@ class SessionRecoveryMixin:
     def _legacy_account_session_key(self, source: SessionSource, session_key: str) -> Optional[str]:
         from gateway.session_identity import transport_profile_of
         account = transport_profile_of(source)
-        suffix = f":account:{account}"
+        suffix = f":account~:{account}"
         return session_key[:-len(suffix)] if account and session_key.endswith(suffix) else None
+
+    def _preserve_foreign_account_entry(self, source: SessionSource, session_key: str) -> None:
+        """The runtime's own bot must not claim a legacy key belonging to another receiver."""
+        from gateway.session_identity import transport_profile_of
+        account = transport_profile_of(source)
+        if not account or ":account~:" in session_key:
+            return
+        with self._lock:
+            self._ensure_loaded_locked()
+            entry = self._entries.get(session_key)
+            if entry is None or entry.transport_profile in (None, account):
+                return
+            owner_key = f"{session_key}:account~:{entry.transport_profile}"
+            if owner_key in self._entries:
+                raise ValueError("Legacy conversation conflicts with its bot-account lane; explicit repair required")
+            preserved = replace(entry, session_key=owner_key)
+            self._entries[owner_key] = preserved
+            self._entries.pop(session_key)
+        self._save_entries()
+        self._record_gateway_session_peer(
+            preserved.session_id, owner_key, preserved.origin, display_name=preserved.display_name,
+            transport_profile=preserved.transport_profile)
 
     def _adopt_legacy_account_entry(self, source: SessionSource, session_key: str) -> None:
         """Rekey only the exact legacy lane whose persisted receiving bot is known; never merge."""
@@ -199,7 +221,12 @@ class SessionRecoveryMixin:
         platform/chat/user fallback: that tuple has no workspace id and could revive another team's
         session; the caller performs one explicit exact lookup of the old unscoped key instead."""
         from gateway.session_identity import transport_profile_of
-        allow_peer_fallback = allow_peer_fallback and transport_profile_of(source) is None
+        from gateway.session import is_shared_multi_user_session
+        shared = is_shared_multi_user_session(
+            source, group_sessions_per_user=getattr(self.config, "group_sessions_per_user", True),
+            thread_sessions_per_user=getattr(self.config, "thread_sessions_per_user", False))
+        allow_peer_fallback = (allow_peer_fallback and transport_profile_of(source) is None
+                               and (source.chat_type == "dm" or shared))
         return self._peer_row(
             self._db_for_key(session_key), source=source.platform.value, session_key=session_key,
             user_id=source.user_id,

@@ -36,14 +36,21 @@ isolated seed needs the scheduling participant, including a stable alternative u
 Legacy origins obtain their kind from the live adapter. Without one, only a single persisted
 session matching the exact room, thread, scope, account and permitted participant can receive a
 mirror. Missing or ambiguous evidence skips continuation with a warning; delivery still follows
-the configured target. Account/profile mismatches in a captured origin refuse delivery.
+the configured target. Account/profile mismatches in a captured origin refuse delivery. A different receiving bot
+requires its live gateway; standalone delivery never borrows another profile's credentials.
+Slack workspace scope reaches both text and media sends. A native standalone Slack sender checks
+token ownership with `auth.test` before submitting any payload to a scoped target.
 
 Historical key spellings remain compatible. A shared receiving bot routed into another runtime
-adds `:account:<transport_profile>` to distinguish it from that runtime's own bot. An exact legacy
+adds `:account~:<transport_profile>` to distinguish it from that runtime's own bot. An exact legacy
 key can move to this spelling only when its persisted receiving account proves ownership and
 there is no destination collision. Its session ID/history is retained; histories are never merged.
-Unknown ownership starts a separate lane. Matrix rooms formerly misclassified by member count
-also start a separate group lane, retaining their old DM transcript.
+Unknown ownership cannot migrate into an account-tagged lane. A native bot also cannot claim a
+legacy key naming another receiver: that entry moves to its proven owner's account key first;
+a destination collision requires explicit repair. Tightening participant isolation starts a
+separate lane: recovery never imports a formerly shared transcript by matching only the room
+and sender. Matrix rooms formerly misclassified by member count also start a separate group
+lane, retaining their old DM transcript.
 
 ## Scheduling Model
 
@@ -396,13 +403,16 @@ For **Telegram topics**, use `telegram:<chat_id>:<thread_id>` (e.g., `telegram:-
 
 By default (`cron.wrap_response: true`), cron deliveries are wrapped with:
 - A header identifying the cron job name and task
-- A footer noting the agent cannot see the delivered message in conversation
+- A footer explaining how to stop or manage the job
 
 The `[SILENT]` prefix in a cron response suppresses delivery entirely — useful for jobs that only need to write to files or perform side effects.
 
 ### Session Isolation
 
-Cron deliveries are NOT mirrored into gateway session conversation history. They exist only in the cron job's own session. This prevents message alternation violations in the target chat's conversation.
+Cron execution has its own session. When continuation is enabled, a confirmed delivery also
+seeds the resolved gateway session with the brief as a user turn labeled `cron`. The explicit
+session ID and isolation policy determine the destination. Ambiguous legacy addresses skip
+continuation with a warning; no room-wide latest-session fallback is used.
 
 ## Recursion Guard
 

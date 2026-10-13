@@ -1361,6 +1361,10 @@ def _live_route_metadata(t: _TargetDelivery) -> tuple[Optional[str], dict, dict]
     # Relay egress discriminators (scope_id / user_id) from the persisted origin: the adapter's caches are cold
     # after a restart. See cron/scheduler_delivery_origin.py.
     _origin.stamp_origin_discriminators(t, route_metadata, media_metadata)
+    if t.session_source is not None:
+        from gateway.session_context import source_route_metadata
+        route_metadata = source_route_metadata(t.session_source, route_metadata)
+        media_metadata = source_route_metadata(t.session_source, media_metadata)
     return route_thread_id, route_metadata, media_metadata
 
 
@@ -1569,9 +1573,13 @@ def _standalone_send(
     async def _send():
         # The bound lives inside the coroutine: the running-loop fallback below closes ``coro``
         # unstarted, and a wait_for wrapper created out here would be left never awaited.
+        captured = t.origin.get("conversation") if t.origin_target else None
+        address = captured.get("address", {}) if isinstance(captured, dict) else {}
+        route_metadata = {"scope_id": address.get("scope_id") or t.origin.get("scope_id")} if t.origin_target else {}
+        kwargs = {"route_metadata": route_metadata} if route_metadata.get("scope_id") else {}
         return await asyncio.wait_for(_send_to_platform(
             t.platform, t.pconfig, t.chat_id, content, thread_id=t.thread_id,
-            media_files=media_files), timeout=send_timeout)
+            media_files=media_files, **kwargs), timeout=send_timeout)
 
     def _warned(msg: str) -> tuple[None, str]:
         logger.warning("Job '%s': %s", job["id"], msg)
@@ -1657,6 +1665,11 @@ def _deliver_standalone(
 ) -> None:
     """Standalone fallback for a target the live lane did not deliver."""
     job = t.job
+    captured = t.origin.get("conversation") if t.origin_target else None
+    address = captured.get("address", {}) if isinstance(captured, dict) else {}
+    if address.get("account") and address.get("account") != address.get("profile"):
+        _note_target_error(job, "The receiving bot belongs to another profile; a live gateway is required", delivery_errors)
+        return
     if t.is_relay:
         # Relay owns the destination and credential; a native retry could duplicate — fail closed.
         if not target_errors:
@@ -1740,7 +1753,8 @@ def _prepare_target_delivery(
         and getattr(loop, "is_running", lambda: False)()
     )
     session_source = None
-    if live_adapter_ready and (mirror_this_target or _resolve_cron_surface_mode(pconfig, platform_name) == "in_channel"):
+    if live_adapter_ready and (mirror_this_target or origin.get("conversation")
+                              or _resolve_cron_surface_mode(pconfig, platform_name) == "in_channel"):
         from gateway.conversation import resolve_delivery_source
         from agent.async_utils import safe_schedule_threadsafe
         try:
@@ -1754,7 +1768,8 @@ def _prepare_target_delivery(
             logger.warning("Job '%s': conversation resolution refused for %s:%s: %s", job["id"], platform_name, chat_id, exc, exc_info=True)
     is_dm_target = session_source is not None and session_source.chat_type == "dm"
     inchannel_continuable = session_source is not None and (origin_target or (
-        mirror_this_target and _inchannel_seed_allowed(is_dm=is_dm_target, user_id=origin_user_id)))
+        mirror_this_target and _inchannel_seed_allowed(
+            is_dm=is_dm_target, user_id=session_source.user_id_alt or session_source.user_id)))
 
     # Continuable surface (D1/D2/D6) from platform config ``extra``; default "thread".
     # ``in_channel`` delivers FLAT so a plain channel reply continues via the shared session

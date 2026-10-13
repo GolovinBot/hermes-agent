@@ -1,5 +1,6 @@
 """Conversation location and kind, independent of session isolation and legacy key spelling."""
 
+import re
 from dataclasses import asdict, dataclass
 from typing import Optional
 
@@ -24,7 +25,7 @@ class ConversationAddress:
 
 def conversation_kind(chat_type: str) -> str:
     # Old adapters used "thread" as a kind; topology now lives in the address.
-    kind = {"thread": "group", "forum": "group"}.get(chat_type, chat_type)
+    kind = {"thread": "group", "forum": "group", "c2c": "dm", "guild": "group", "private": "dm"}.get(chat_type, chat_type)
     if kind not in {"dm", "group", "channel"}:
         raise ValueError(f"Unknown conversation kind: {chat_type!r}")
     return kind
@@ -80,18 +81,24 @@ async def resolve_delivery_source(adapter, platform: str, chat_id: str, thread_i
     captured = origin.get("conversation") if same_chat else None
     if captured is not None:
         if not isinstance(captured, dict) or captured.get("version") != 1:
-            raise ValueError("Unsupported cron conversation origin; recreate or repair the job")
+            raise PermissionError("Unsupported cron conversation origin; recreate or repair the job")
         stored = captured.get("address")
         if not isinstance(stored, dict) or stored.get("platform") != platform or stored.get("chat_id") != str(chat_id):
-            raise ValueError("Cron conversation address disagrees with its delivery target")
+            raise PermissionError("Cron conversation address disagrees with its delivery target")
         ConversationAddress(**stored)
         kind = conversation_kind(captured.get("kind"))
     else:
         stored = {}
-        info = await adapter.get_chat_info(str(chat_id))
+        import inspect
+        scope = origin.get("scope_id") if same_chat else None
+        kwargs = {"scope_id": scope} if scope and "scope_id" in inspect.signature(adapter.get_chat_info).parameters else {}
+        info = await adapter.get_chat_info(str(chat_id), **kwargs)
         if not isinstance(info, dict) or info.get("error"):
             raise ValueError("Adapter could not resolve the legacy cron conversation")
         kind = conversation_kind(info.get("type"))
+        stored["scope_id"] = (origin.get("scope_id") if same_chat else None) or info.get("scope_id")
+    if platform == "slack" and not stored.get("scope_id"):
+        raise ValueError("Cannot seed a Slack conversation without its workspace scope")
     address = ConversationAddress(
         platform, str(chat_id), str(thread_id) if thread_id else None,
         stored.get("scope_id") or (origin.get("scope_id") if same_chat else None),
@@ -105,7 +112,7 @@ async def resolve_delivery_source(adapter, platform: str, chat_id: str, thread_i
     )
     adapter._canonicalize(source)
     if source.profile_route_rejected:
-        raise ValueError("Cron conversation routes to an unserved profile")
+        raise PermissionError("Cron conversation routes to an unserved profile")
     identity = identity_of(source)
     if address.account and (identity is None or identity.transport_profile != address.account):
         raise PermissionError("Cron conversation belongs to another bot account")
@@ -154,3 +161,34 @@ def existing_delivery_session(store, platform: str, chat_id: str, thread_id: Opt
                 continue
         candidates.append(entry)
     return candidates[0] if len(candidates) == 1 else None
+
+
+_PROFILE_ID_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+
+def _parse_session_key(session_key: str) -> dict | None:
+    """Parse a session key (``agent:{ns}:{platform}:{chat_type}:{chat_id}[:{extra}...]``).
+
+    ``{ns}`` is ``main`` for the default profile, ``main~`` for a profile literally named ``main``
+    (``gateway.session._session_key_namespace``), or a named-profile id (profile ids match
+    ``[a-z0-9][a-z0-9_-]{0,63}`` — never contain ``:`` — so a plain split stays unambiguous).
+    For group/channel sessions the suffix may be a user_id, not a thread_id, so ``thread_id``
+    is omitted. Named profiles are reported as ``profile``; ``main`` keys keep their historical
+    shape exactly (no ``profile`` key) so equality assertions on parsed dicts stay stable.
+    """
+    if ":account~:" in session_key:
+        return None  # A receiving bot requires a persisted origin, never a raw-key guess.
+    from gateway.session import profile_from_session_key_namespace
+    parts = session_key.split(":")
+    if (
+        len(parts) >= 5
+        and parts[0] == "agent"
+        and (parts[1] in ("main", "main~") or _PROFILE_ID_KEY_RE.match(parts[1]))
+    ):
+        result = {"platform": parts[2], "chat_type": parts[3], "chat_id": parts[4]}
+        if parts[1] != "main":
+            result["profile"] = profile_from_session_key_namespace(parts[1])
+        if len(parts) > 5 and parts[3] in {"dm", "thread"}:
+            result["thread_id"] = parts[5]
+        return result
+    return None

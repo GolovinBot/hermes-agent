@@ -112,7 +112,7 @@ def _origin_from_env(
     source = get_session_source()
     entry = None
     session_key = get_session_env("HERMES_SESSION_KEY")
-    if source is None and session_key:
+    if source is None and session_key.startswith("agent:"):
         from gateway.config import load_gateway_config
         from gateway.session import SessionStore
         config = load_gateway_config()

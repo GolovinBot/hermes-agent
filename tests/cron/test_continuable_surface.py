@@ -81,7 +81,7 @@ class TestCronContinuableSurfaceInChannel:
     def _slack_adapter(self, supports_inchannel=True, with_store=True):
         adapter = AsyncMock()
         adapter._canonicalize = MagicMock()
-        adapter.get_chat_info.return_value = {"type": "group"}
+        adapter.get_chat_info.return_value = {"type": "group", "scope_id": "workspace"}
         adapter.send.return_value = MagicMock(
             success=True, message_id="msg_1", raw_response=None,
         )
@@ -247,10 +247,8 @@ class TestCronContinuableSurfaceInChannel:
             "a cold-cache relay egress has no tenant discriminator"
         )
 
-    def test_legacy_origin_without_scope_stamps_nothing(self):
-        """Legacy jobs (origin persisted before scope capture) must not gain
-        a scope_id key — the relay's per-chat cache / home-channel stamping
-        remain the only sources, exactly today's behavior."""
+    def test_legacy_origin_uses_adapter_resolved_scope(self):
+        """A scope absent from the job is resolved by the adapter and pinned through egress."""
         captured = {}
 
         class _SpyRouter:
@@ -268,7 +266,7 @@ class TestCronContinuableSurfaceInChannel:
                 {"slack": {"cron_continuable_surface": "in_channel"}}, adapter,
                 attach_to_session=False,
             )
-        assert "scope_id" not in captured["metadata"]
+        assert captured["metadata"]["scope_id"] == "workspace"
 
     def test_native_adapter_scalar_false_fails_safe_to_thread(self):
         """D6 fallback boundary with a REAL (non-mock) adapter shape: a native

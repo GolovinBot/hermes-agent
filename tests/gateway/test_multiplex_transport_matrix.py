@@ -96,7 +96,7 @@ def test_live_rows_reply_through_the_receiving_bot_whatever_the_runtime(mux):
     sat, sat_id = _live(mux, mux.primary, "72719239")
     assert (sat_id.transport_profile, sat_id.runtime_profile) == ("default", "ops")
     assert r._intake_adapter_for(sat) is r._delivery_adapter_for(sat) is mux.primary
-    assert r._session_key_for_source(sat) == "agent:ops:telegram:dm:72719239"
+    assert r._session_key_for_source(sat) == "agent:ops:telegram:dm:72719239:account~:default"
 
     # per-credential source routed to a profile that owns a bot: runtime team_b, reply via the
     # bot that received it — conversation continuity (D1), not the routed profile's bot (#70625).
@@ -110,7 +110,7 @@ def test_live_rows_reply_through_the_receiving_bot_whatever_the_runtime(mux):
     assert (inverse_id.transport_profile, inverse_id.runtime_profile) == ("team_b", "default")
     assert inverse_id.runtime_home == mux.home and inverse_id.namespace == "agent:main"
     assert r._intake_adapter_for(inverse) is r._delivery_adapter_for(inverse) is mux.team_b
-    assert mux.team_b._source_session_key(inverse) == "agent:main:telegram:dm:999"
+    assert mux.team_b._source_session_key(inverse) == "agent:main:telegram:dm:999:account~:team_b"
 
     # Provenance survives a reconnect: the transport ref dies, the identity still names the bot.
     replacement = _stub(Platform.TELEGRAM, r, "PRIMARY2")
