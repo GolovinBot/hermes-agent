@@ -76,3 +76,19 @@ def test_native_bot_cannot_claim_a_legacy_lane_owned_by_a_shared_bot(tmp_path):
     restored = store.get_or_create_session(shared)
     assert restored.session_id == legacy.session_id
     assert store.load_transcript(restored.session_id)[0]["content"] == "other bot history"
+
+
+@pytest.mark.parametrize("thread", [None, "$root"])
+def test_relaxing_isolation_does_not_publish_a_private_history(tmp_path, monkeypatch, thread):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "home"))
+    config = GatewayConfig(group_sessions_per_user=True, thread_sessions_per_user=True)
+    store = SessionStore(tmp_path / "sessions", config)
+    source = SessionSource(Platform.MATRIX, "!room:example.org", chat_type="group",
+                           thread_id=thread, user_id="alice")
+    private = store.get_or_create_session(source)
+    store.append_to_transcript(private.session_id, {"role": "user", "content": "private history"})
+    config.group_sessions_per_user = False
+    config.thread_sessions_per_user = False
+    shared = store.get_or_create_session(source)
+    assert shared.session_id != private.session_id
+    assert not store.load_transcript(shared.session_id)

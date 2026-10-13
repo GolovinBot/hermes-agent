@@ -221,12 +221,9 @@ class SessionRecoveryMixin:
         platform/chat/user fallback: that tuple has no workspace id and could revive another team's
         session; the caller performs one explicit exact lookup of the old unscoped key instead."""
         from gateway.session_identity import transport_profile_of
-        from gateway.session import is_shared_multi_user_session
-        shared = is_shared_multi_user_session(
-            source, group_sessions_per_user=getattr(self.config, "group_sessions_per_user", True),
-            thread_sessions_per_user=getattr(self.config, "thread_sessions_per_user", False))
+        # A changed group/thread key is a different isolation lane, in either direction.
         allow_peer_fallback = (allow_peer_fallback and transport_profile_of(source) is None
-                               and (source.chat_type == "dm" or shared))
+                               and source.chat_type == "dm")
         return self._peer_row(
             self._db_for_key(session_key), source=source.platform.value, session_key=session_key,
             user_id=source.user_id,

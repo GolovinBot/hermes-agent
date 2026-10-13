@@ -52,9 +52,9 @@ key can move to this spelling only when its persisted receiving account proves o
 there is no destination collision. Its session ID/history is retained; histories are never merged.
 Unknown ownership cannot migrate into an account-tagged lane. A native bot also cannot claim a
 legacy key naming another receiver: that entry moves to its proven owner's account key first;
-a destination collision requires explicit repair. Tightening participant isolation starts a
-separate lane: recovery never imports a formerly shared transcript by matching only the room
-and sender. Matrix rooms formerly misclassified by member count also start a separate group
+a destination collision requires explicit repair. Changing participant isolation selects a separate key: non-DM recovery requires that exact
+key and never imports a formerly private or shared transcript by matching only the room and
+sender. Previously used keys retain their own history. Matrix rooms formerly misclassified by member count also start a separate group
 lane, retaining their old DM transcript.
 
 ## Scheduling Model
