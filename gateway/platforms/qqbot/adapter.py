@@ -1645,8 +1645,9 @@ class QQAdapter(OwnAccessPolicyMixin, BasePlatformAdapter):
         return content if self._markdown_support else strip_markdown(content)
 
     async def get_chat_info(self, chat_id: str) -> dict[str, Any]:
-        chat_type = self._guess_chat_type(chat_id)
-        return {"name": chat_id, "type": "group" if chat_type in {"group", "guild"} else "dm"}
+        chat_type = self._chat_type_map.get(chat_id)
+        return {"name": chat_id, "type": "group" if chat_type in {"group", "guild"}
+                else "dm" if chat_type == "c2c" else "unknown"}
 
     @staticmethod
     def _is_url(source: str) -> bool:

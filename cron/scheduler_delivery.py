@@ -1822,6 +1822,13 @@ def _prepare_target_delivery(
             job, runtime_adapter, chat_id, loop) or None
         if opened_thread_id:
             thread_id = opened_thread_id
+    if session_source is not None and thread_id != session_source.thread_id:
+        from gateway.conversation import resolve_reply_source
+        try:
+            session_source = resolve_reply_source(runtime_adapter, session_source, thread_id)
+        except PermissionError as exc:
+            _note_target_error(job, str(exc), delivery_errors)
+            return None
     return _TargetDelivery(
         job=job, platform=platform, platform_name=platform_name, chat_id=chat_id,
         thread_id=thread_id, transport=transport, pconfig=pconfig, runtime_adapter=runtime_adapter,

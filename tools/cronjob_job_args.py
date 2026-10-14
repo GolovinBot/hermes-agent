@@ -56,6 +56,47 @@ def _first_fire_within_thread_horizon(
     return timedelta(0) <= delta <= timedelta(minutes=_THREAD_HORIZON_MINUTES)
 
 
+def _recover_conversation_origin(session_key, origin, thread_id):
+    """Children own the runtime DB; the gateway's central routing index may live elsewhere."""
+    import json
+    from gateway.config import load_gateway_config
+    from gateway.conversation import conversation_origin
+    from gateway.session import SessionSource, SessionStore
+
+    config = load_gateway_config()
+    store = SessionStore(config.sessions_dir, config)
+    try:
+        entry = store.lookup_by_session_key(session_key)
+        source = entry.origin if entry else None
+        account = entry.transport_profile if entry else None
+        if source is None:
+            row = store._peer_row(store._db, source=origin["platform"], session_key=session_key,
+                                  raise_on_lookup_error=True)
+            if not row or row.get("session_key") != session_key or not row.get("origin_json"):
+                raise ValueError("Cannot recover the cron conversation from its durable session key")
+            source = SessionSource.from_dict(json.loads(row["origin_json"]))
+            account = row.get("transport_profile")
+        from gateway.session_context import get_session_env
+        if (source.platform.value, str(source.chat_id), source.thread_id or "") != (
+                origin["platform"], str(origin["chat_id"]), get_session_env("HERMES_SESSION_THREAD_ID")):
+            raise ValueError("Cron origin does not match the durable session address")
+        for field in ("user_id", "user_id_alt", "scope_id", "parent_chat_id"):
+            if origin.get(field) and origin[field] != getattr(source, field):
+                raise ValueError("Cron origin does not match the durable session participant or scope")
+            origin[field] = getattr(source, field)
+        captured = conversation_origin(source, thread_id=thread_id)
+        captured["address"]["account"] = account
+        # Standalone named profiles keep agent:main; only multiplex namespaces name the owner.
+        captured["address"]["profile"] = (
+            store._profile_from_session_key(session_key) if config.multiplex_profiles
+            else origin["profile"] or source.profile)
+        if config.multiplex_profiles and origin["profile"] and origin["profile"] != captured["address"]["profile"]:
+            raise ValueError("Cron origin does not match the durable session profile")
+        return captured
+    finally:
+        store.close_all_db_handles()
+
+
 def _origin_from_env(
     schedule: str | dict[str, Any] | None = None,
 ) -> Optional[dict[str, Any]]:
@@ -110,30 +151,14 @@ def _origin_from_env(
         "profile": get_session_env("HERMES_SESSION_PROFILE") or None,
     }
     source = get_session_source()
-    entry = None
     session_key = get_session_env("HERMES_SESSION_KEY")
     if source is None and session_key.startswith("agent:"):
-        from gateway.config import load_gateway_config
-        from gateway.session import SessionStore
-        config = load_gateway_config()
-        store = SessionStore(config.sessions_dir, config)
-        entry = store.lookup_by_session_key(session_key)
-        if entry is None or entry.origin is None:
-            raise ValueError("Cannot recover the cron conversation from its durable session key")
-        source = entry.origin
-        if source is not None and (source.platform.value, str(source.chat_id), source.thread_id or "") != (
-                origin_platform, str(origin_chat_id), get_session_env("HERMES_SESSION_THREAD_ID")):
-            raise ValueError("Cron origin does not match the durable session address")
-    if source is not None:
+        origin["conversation"] = _recover_conversation_origin(session_key, origin, thread_id)
+        origin["chat_id"] = origin["conversation"]["address"]["chat_id"]
+    elif source is not None:
         from gateway.conversation import conversation_origin
         origin["conversation"] = conversation_origin(source, thread_id=thread_id)
         origin["chat_id"] = source.parent_chat_id or source.chat_id
-        if entry is not None:
-            origin["conversation"]["address"]["account"] = entry.transport_profile
-            # Standalone gateways retain agent:main even when launched as a named profile.
-            origin["conversation"]["address"]["profile"] = (
-                store._profile_from_session_key(entry.session_key) if config.multiplex_profiles
-                else origin["profile"] or source.profile)
     return origin
 
 

@@ -32,8 +32,14 @@ fields. Cron resolves a reply-facing `SessionSource` and uses the same `SessionS
 `build_session_key()` path as inbound messages. It mirrors to the exact resulting session ID,
 never by a most-recent-chat guess. Group and thread isolation are independent settings; an
 isolated seed needs the scheduling participant, including a stable alternative user ID.
+The stored runtime profile is an ownership expectation, not a preselected routing result.
+Current routes are resolved again after choosing the final room/thread surface. A changed
+runtime owner refuses continuation; a companion thread routed to another owner is skipped.
+Mirroring uses the selected session's store, including its owning profile and append retry queue.
 
-Legacy origins obtain their kind from the live adapter. Without one, only a single persisted
+Legacy origins first use a single exact persisted inbound source; otherwise the live adapter
+must provide a known kind. DingTalk and WeCom IDs do not encode kind, and a cold QQ cache does
+not prove a DM. Unknown kinds skip continuation instead of guessing. Without a live adapter, only a single persisted
 session matching the exact room, thread, scope, account and permitted participant can receive a
 mirror. Missing or ambiguous evidence skips continuation with a warning; delivery still follows
 the configured target. Account/profile mismatches in a captured origin refuse delivery. A different receiving bot
@@ -45,6 +51,9 @@ key retains its historical spelling; the owning runtime supplies its profile for
 rather than interpreting `main` as a promise that the profile is `default`.
 Slack workspace scope reaches both text and media sends. A native standalone Slack sender checks
 token ownership with `auth.test` before submitting any payload to a scoped target.
+Child processes recover a conversation by its exact key in their runtime SessionDB when the
+central gateway routing index is absent locally; reset boundaries and address/participant
+checks still apply.
 
 Historical key spellings remain compatible. A shared receiving bot routed into another runtime
 adds `:account~:<transport_profile>` to distinguish it from that runtime's own bot. An exact legacy

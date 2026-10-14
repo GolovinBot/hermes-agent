@@ -97,8 +97,6 @@ def receiving_adapter_for_origin(adapter, platform: str, chat_id: str, origin: d
 
 async def resolve_delivery_source(adapter, platform: str, chat_id: str, thread_id: Optional[str], origin: dict):
     """Resolve a reply-facing source through the receiving adapter; ambiguous legacy origins refuse."""
-    from gateway.session_identity import identity_of
-
     same_chat = (str(origin.get("platform", "")).lower() == platform
                  and str(origin.get("parent_chat_id") or origin.get("chat_id", "")) == str(chat_id))
     captured = origin.get("conversation") if same_chat else None
@@ -114,12 +112,20 @@ async def resolve_delivery_source(adapter, platform: str, chat_id: str, thread_i
         stored = {}
         import inspect
         scope = origin.get("scope_id") if same_chat else None
-        kwargs = {"scope_id": scope} if scope and "scope_id" in inspect.signature(adapter.get_chat_info).parameters else {}
-        info = await adapter.get_chat_info(str(chat_id), **kwargs)
-        if not isinstance(info, dict) or info.get("error"):
-            raise ValueError("Adapter could not resolve the legacy cron conversation")
-        kind = conversation_kind(info.get("type"))
-        stored["scope_id"] = (origin.get("scope_id") if same_chat else None) or info.get("scope_id")
+        store = getattr(adapter, "_session_store", None)
+        entry = (existing_delivery_session(store, platform, chat_id, thread_id, origin)
+                 if store is not None else None)
+        if entry is not None:
+            stored = asdict(address_of(entry.origin))
+            stored["account"] = entry.transport_profile
+            kind = conversation_kind(entry.origin.conversation_kind or entry.origin.chat_type)
+        else:
+            kwargs = {"scope_id": scope} if scope and "scope_id" in inspect.signature(adapter.get_chat_info).parameters else {}
+            info = await adapter.get_chat_info(str(chat_id), **kwargs)
+            if not isinstance(info, dict) or info.get("error"):
+                raise ValueError("Adapter could not resolve the legacy cron conversation")
+            kind = conversation_kind(info.get("type"))
+            stored["scope_id"] = scope or info.get("scope_id")
     if platform == "slack" and not stored.get("scope_id"):
         raise ValueError("Cannot seed a Slack conversation without its workspace scope")
     address = ConversationAddress(
@@ -128,11 +134,20 @@ async def resolve_delivery_source(adapter, platform: str, chat_id: str, thread_i
         stored.get("profile") or (origin.get("profile") if same_chat else None),
         stored.get("account"),
     )
-    source = source_for_address(
+    return _canonical_delivery_source(
+        adapter,
         address, kind, user_id=origin.get("user_id") if same_chat else None,
         user_id_alt=origin.get("user_id_alt") if same_chat else None,
         chat_name=origin.get("chat_name") if same_chat else None,
     )
+
+
+def _canonical_delivery_source(adapter, address, kind, **fields):
+    from dataclasses import replace
+    from gateway.session_identity import identity_of
+
+    # A persisted runtime is an expectation, never an input that bypasses current routes.
+    source = source_for_address(replace(address, profile=None), kind, **fields)
     adapter._canonicalize(source)
     if source.profile_route_rejected:
         raise PermissionError("Cron conversation routes to an unserved profile")
@@ -142,6 +157,16 @@ async def resolve_delivery_source(adapter, platform: str, chat_id: str, thread_i
     if address.profile and identity and identity.runtime_profile != address.profile:
         raise PermissionError("Cron conversation belongs to another runtime profile")
     return source
+
+
+def resolve_reply_source(adapter, source, thread_id):
+    """Resolve the final reply address anew; changing topology cannot carry a pinned identity."""
+    from dataclasses import replace
+
+    return _canonical_delivery_source(
+        adapter, replace(address_of(source), thread_id=thread_id),
+        source.conversation_kind or source.chat_type,
+        user_id=source.user_id, user_id_alt=source.user_id_alt, chat_name=source.chat_name)
 
 
 def existing_delivery_session(store, platform: str, chat_id: str, thread_id: Optional[str], origin: dict):

@@ -47,7 +47,7 @@ def _seed_cron_session(
     return mirror_to_session(
         platform_name, str(chat_id), _cron_mirror_message(job, text),
         source_label="cron", thread_id=thread_id, user_id=user_id, role="user",
-        session_id=seeded_session_id,
+        session_id=seeded_session_id, session_store=session_store,
     )
 
 
@@ -131,18 +131,6 @@ def _seed_live_delivery_sessions(t, delivered_message_id) -> None:
         if t.mirror_this_target or t.in_channel_surface:
             logger.warning("Job '%s': continuation skipped because the conversation could not be resolved", job["id"])
         return
-    from gateway.conversation import address_of, source_for_address
-    from gateway.session_identity import replace_source
-    from dataclasses import replace
-
-    def reply_source(thread_id):
-        source = source_for_address(
-            replace(address_of(t.session_source), thread_id=thread_id),
-            t.session_source.conversation_kind or t.session_source.chat_type,
-            user_id=t.session_source.user_id, user_id_alt=t.session_source.user_id_alt,
-            chat_name=t.session_source.chat_name)
-        return replace_source(t.session_source, chat_id=source.chat_id, chat_type=source.chat_type,
-                              thread_id=source.thread_id, parent_chat_id=source.parent_chat_id)
     origin = t.origin
     seed_kwargs = dict(
         chat_name=origin.get("chat_name"), is_dm=t.is_dm_target, scope_id=origin.get("scope_id"))
@@ -151,7 +139,7 @@ def _seed_live_delivery_sessions(t, delivered_message_id) -> None:
     if t.opened_thread_id:
         thread_seeded = _seed_cron_thread_session(
             job, t.runtime_adapter, t.platform_name, t.chat_id, t.opened_thread_id, t.mirror_text,
-            **seed_kwargs, source=reply_source(t.opened_thread_id), user_id=t.origin_user_id,
+            **seed_kwargs, source=t.session_source, user_id=t.origin_user_id,
         )
     # in_channel: CREATE + seed the flat session (the mirror only APPENDS to an existing one). Same
     # `inchannel_continuable` gate as the flatten in _deliver_result (must not drift). Origin
@@ -159,7 +147,7 @@ def _seed_live_delivery_sessions(t, delivered_message_id) -> None:
     if t.in_channel_surface and t.inchannel_continuable and not thread_seeded:
         inchannel_seeded = _seed_cron_channel_session(
             job, t.runtime_adapter, t.platform_name, t.chat_id, t.mirror_text,
-            user_id=t.origin_user_id, **seed_kwargs, source=reply_source(None))
+            user_id=t.origin_user_id, **seed_kwargs, source=t.session_source)
         if not inchannel_seeded:
             logger.warning(
                 "Job '%s': in_channel seed did NOT land on %s:%s "
@@ -168,10 +156,15 @@ def _seed_live_delivery_sessions(t, delivered_message_id) -> None:
         # Companion THREAD seed: a reply in the brief's own thread keys to (chat, thread=<ts>),
         # which the flat seed never touches. Seed it too so BOTH reply surfaces continue the job.
         if delivered_message_id:
-            _seed_cron_thread_session(
-                job, t.runtime_adapter, t.platform_name, t.chat_id, str(delivered_message_id),
-                t.mirror_text,
-                **seed_kwargs, source=reply_source(str(delivered_message_id)), user_id=t.origin_user_id)
+            from gateway.conversation import resolve_reply_source
+            try:
+                companion = resolve_reply_source(t.runtime_adapter, t.session_source, str(delivered_message_id))
+            except PermissionError as exc:
+                logger.warning("Job '%s': companion thread continuation refused: %s", job["id"], exc)
+            else:
+                _seed_cron_thread_session(
+                    job, t.runtime_adapter, t.platform_name, t.chat_id, str(delivered_message_id),
+                    t.mirror_text, **seed_kwargs, source=companion, user_id=t.origin_user_id)
     elif t.in_channel_surface and not t.inchannel_continuable:
         logger.warning(
             "Job '%s': in_channel delivery to %s:%s is not a "
@@ -186,4 +179,4 @@ def _seed_live_delivery_sessions(t, delivered_message_id) -> None:
             job, t.runtime_adapter, t.platform_name, t.chat_id, t.mirror_text,
             thread_id=t.thread_id, chat_type=t.session_source.chat_type, user_id=t.origin_user_id,
             chat_name=t.session_source.chat_name, scope_id=t.session_source.scope_id,
-            source=reply_source(t.thread_id))
+            source=t.session_source)
