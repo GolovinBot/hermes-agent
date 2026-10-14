@@ -131,7 +131,7 @@ def test_real_routed_child_uses_the_gateway_isolation_policy(tmp_path, monkeypat
         env["HOME"] = str(tmp_path)
         env["HERMES_STATE_DB_GUARD_BYPASS"] = "1"  # Child HOME is exclusively the disposable installation.
         program = "from tools.cronjob_job_args import _origin_from_env; import json; print(json.dumps(_origin_from_env()))"
-        result = subprocess.run([sys.executable, "-c", program], env=env, text=True, capture_output=True, timeout=30)
+        result = subprocess.run([sys.executable, "-c", program], env=env, text=True, capture_output=True, timeout=30, check=False)
         if not allowed:
             assert result.returncode != 0
             assert "inherited session isolation key" in result.stderr
