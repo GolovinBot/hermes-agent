@@ -57,7 +57,9 @@ Child processes recover a conversation by its exact key in their runtime Session
 central gateway routing index is absent locally; reset boundaries and address/participant
 checks still apply.
 The current participant may differ from the first participant stored in a shared conversation,
-but rebuilding under the current isolation policy must still prove the exact original key.
+but both must rebuild the exact inherited key under the same isolation layout. The child's
+runtime config may differ from the gateway's policy; delivery resolves the current gateway
+policy again rather than carrying a stored session ID.
 Standalone mirrors use the same durable lookup when the launch gateway's index is elsewhere.
 
 Historical key spellings remain compatible. A shared receiving bot routed into another runtime

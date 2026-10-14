@@ -78,14 +78,19 @@ def _recover_conversation_origin(session_key, origin, thread_id):
                 raise ValueError("Cron origin does not match the durable session participant or scope")
             origin[field] = getattr(source, field)
         from dataclasses import replace
+        durable_source = source
         if origin.get("user_id") or origin.get("user_id_alt"):
             source = replace(source, user_id=origin["user_id"], user_id_alt=origin["user_id_alt"])
         origin["user_id"], origin["user_id_alt"] = source.user_id, source.user_id_alt
-        rebuilt = build_session_key(source, config.group_sessions_per_user, config.thread_sessions_per_user,
-                                    profile=store._profile_from_session_key(session_key))
         untagged_key = session_key.removesuffix(f":account~:{account}") if account else session_key
-        if untagged_key != rebuilt:
-            raise ValueError("Cron origin does not match the current session isolation key")
+        # The inherited key proves the gateway's policy; the child's runtime config may differ.
+        profile = store._profile_from_session_key(session_key)
+        for isolated in (False, True):
+            durable_key = build_session_key(durable_source, isolated, isolated, profile=profile)
+            if durable_key == untagged_key and build_session_key(source, isolated, isolated, profile=profile) == untagged_key:
+                break
+        else:
+            raise ValueError("Cron origin does not match the inherited session isolation key")
         captured = conversation_origin(source, thread_id=thread_id)
         captured["address"]["account"] = account
         # Standalone named profiles keep agent:main; only multiplex namespaces name the owner.
