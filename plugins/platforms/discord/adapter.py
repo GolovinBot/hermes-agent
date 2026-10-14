@@ -5611,7 +5611,7 @@ class DiscordAdapter(DiscordMediaMixin, DiscordThreadTitlesMixin, DiscordVoiceIn
             logger.debug("[%s] Failed to rename Discord thread %s", self.name, thread_id, exc_info=True)
             return False
 
-    async def create_handoff_thread(self, parent_chat_id: str, name: str) -> Optional[str]:
+    async def create_handoff_thread(self, parent_chat_id: str, name: str, *, metadata: Optional[dict[str, Any]] = None) -> Optional[str]:
         """Create a handoff thread under a text channel; returns the thread id or ``None``.
         Falls back to seed-message + ``message.create_thread``; DMs/voice/threads can't host threads."""
         if not self._client or not DISCORD_AVAILABLE:

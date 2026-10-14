@@ -1878,13 +1878,13 @@ class SlackAdapter(BasePlatformAdapter):
                 "Without these, bot events are silently dropped upstream of the allow_bots "
                 "gate.", _allow_bots_cfg)
 
-    async def create_handoff_thread(self, parent_chat_id: str, name: str) -> Optional[str]:
+    async def create_handoff_thread(self, parent_chat_id: str, name: str, *, metadata: Optional[dict[str, Any]] = None) -> Optional[str]:
         """Post a seed message and return its ``ts`` as the handoff ``thread_id``. Slack threads
         anchor to a parent message, not a channel-level object. Returns ``None`` on failure."""
         if not self._app:
             return None
         try:
-            client = self._get_client(parent_chat_id)
+            client = self._client_for(parent_chat_id, metadata)
             if client is None:
                 return None
             seed_text = t("platform.slack.handoff.seed",

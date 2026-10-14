@@ -264,7 +264,7 @@ def _maybe_mirror_cron_delivery(
             store.close_all_db_handles()
 
 
-def _open_continuable_cron_thread(job: dict, adapter, chat_id: str, loop) -> Optional[str]:
+def _open_continuable_cron_thread(job: dict, adapter, chat_id: str, loop, *, metadata=None) -> Optional[str]:
     """Open a thread for a continuable cron job via ``adapter.create_handoff_thread``. Returns the
     thread_id, or ``None`` (no thread primitive / failed) = caller falls back to the DM mirror."""
     create_thread = getattr(adapter, "create_handoff_thread", None)
@@ -273,7 +273,7 @@ def _open_continuable_cron_thread(job: dict, adapter, chat_id: str, loop) -> Opt
     thread_name = f"Hermes — {_cron_display_name(job)}"
     try:
         from agent.async_utils import safe_schedule_threadsafe
-        coro = create_thread(str(chat_id), thread_name)
+        coro = create_thread(str(chat_id), thread_name, metadata=metadata)
         future = safe_schedule_threadsafe(coro, loop)  # type: ignore[arg-type]
         if future is None:
             return None
@@ -1822,13 +1822,16 @@ def _prepare_target_delivery(
     opened_thread_id: Optional[str] = None
     if (
         mirror_this_target
+        and session_source is not None
         and not in_channel_surface
         and runtime_adapter is not None
         and loop is not None
         and not thread_id  # never override an explicit origin thread/topic
     ):
+        from gateway.session_context import source_route_metadata
+        metadata = source_route_metadata(session_source, None) if session_source is not None else None
         opened_thread_id = _open_continuable_cron_thread(
-            job, runtime_adapter, chat_id, loop) or None
+            job, runtime_adapter, chat_id, loop, metadata=metadata) or None
         if opened_thread_id:
             thread_id = opened_thread_id
     if session_source is not None and thread_id != session_source.thread_id:

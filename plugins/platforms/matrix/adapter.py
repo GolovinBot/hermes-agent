@@ -1408,7 +1408,7 @@ class MatrixAdapter(BasePlatformAdapter):
             self._client.send_message_event(RoomID(chat_id), EventType.ROOM_MESSAGE, msg_content), timeout=45)
         return str(event_id)
 
-    async def create_handoff_thread(self, parent_chat_id: str, name: str) -> Optional[str]:
+    async def create_handoff_thread(self, parent_chat_id: str, name: str, *, metadata: Optional[dict[str, Any]] = None) -> Optional[str]:
         """Post a seed message and return its ``event_id`` as the handoff ``thread_id``. Matrix has
         no create-thread API: a thread is the events whose ``m.relates_to``/``rel_type: m.thread``
         point at a root event (Slack-style), and ``_apply_relation_metadata`` already threads later

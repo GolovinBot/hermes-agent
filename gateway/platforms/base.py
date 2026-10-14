@@ -2739,10 +2739,8 @@ class BasePlatformAdapter(ABC):
     # Surfaces needing an explicit finalize edit (DingTalk AI Cards): the consumer never skips it.
     REQUIRES_EDIT_FINALIZE: bool = False
 
-    async def create_handoff_thread(self, parent_chat_id: str, name: str) -> Optional[str]:
-        """Create a fresh thread under ``parent_chat_id`` for a CLI→platform session handoff; its id
-        as str, or None when unsupported/failed (the watcher then uses ``parent_chat_id``
-        directly)."""
+    async def create_handoff_thread(self, parent_chat_id: str, name: str, *, metadata: Optional[dict[str, Any]] = None) -> Optional[str]:
+        """Create a scoped handoff thread; return its id or None when unsupported/failed."""
         return None
 
     async def edit_message(

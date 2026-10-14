@@ -39,8 +39,8 @@ Current routes are resolved again after choosing the final room/thread surface. 
 runtime owner refuses continuation; a companion thread routed to another owner is skipped.
 Mirroring uses the selected session's store, including its owning profile and append retry queue.
 
-Legacy origins first use a single exact persisted inbound source; otherwise the live adapter
-must provide a known kind. DingTalk and WeCom IDs do not encode kind, and a cold QQ cache does
+Legacy origins use a known kind from live metadata; a getter reporting `unknown` requires a
+single exact persisted inbound source. DingTalk and WeCom IDs do not encode kind, and a cold QQ cache does
 not prove a DM. Unknown kinds skip continuation instead of guessing. Without a live adapter, only a single persisted
 session matching the exact room, thread, scope, account and permitted participant can receive a
 mirror. Missing or ambiguous evidence skips continuation with a warning; delivery still follows
@@ -51,7 +51,8 @@ Standalone delivery never borrows another profile's credentials. A captured runt
 match the bound standalone runtime before any payload is submitted. A standalone `agent:main`
 key retains its historical spelling; the owning runtime supplies its profile for exact mirroring,
 rather than interpreting `main` as a promise that the profile is `default`.
-Slack workspace scope reaches both text and media sends. A native standalone Slack sender checks
+Slack workspace scope reaches thread creation as well as text and media sends. An unresolved
+conversation cannot open a continuation thread. A native standalone Slack sender checks
 token ownership with `auth.test` before submitting any payload to a scoped target.
 Child processes recover a conversation by its exact key in their runtime SessionDB when the
 central gateway routing index is absent locally; reset boundaries and address/participant
@@ -67,7 +68,8 @@ adds `:account~:<transport_profile>` to distinguish it from that runtime's own b
 key can move to this spelling only when its persisted receiving account proves ownership and
 there is no destination collision. Its session ID/history is retained; histories are never merged.
 Unknown ownership cannot migrate into an account-tagged lane. A native bot also cannot claim a
-legacy key naming another receiver: that entry moves to its proven owner's account key first;
+legacy key naming another receiver: that entry moves to its proven owner's account key first,
+including before explicit `/new` reset and forced creation;
 a destination collision requires explicit repair. Changing participant isolation selects a separate key: non-DM recovery requires that exact
 key and never imports a formerly private or shared transcript by matching only the room and
 sender. Previously used keys retain their own history. Matrix rooms formerly misclassified by member count also start a separate group

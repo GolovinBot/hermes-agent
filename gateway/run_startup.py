@@ -1743,6 +1743,7 @@ class GatewayStartupMixin:
         try:
             new_thread_id = await transport.adapter.create_handoff_thread(
                 home_chat_id, t("gateway.startup.handoff_thread_title", title=cli_title),
+                metadata={"scope_id": home.scope_id} if home.scope_id else None,
             )
         except Exception as exc:
             logger.debug("Handoff: create_handoff_thread raised on %s: %s", platform_name, exc, exc_info=True)

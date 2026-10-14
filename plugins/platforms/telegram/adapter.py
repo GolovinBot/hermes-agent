@@ -2519,7 +2519,7 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
                     "[%s] Failed to create DM topic '%s' in chat %s: %s", self.name, name, chat_id, _redact_telegram_error_text(e))
             return None
 
-    async def create_handoff_thread(self, parent_chat_id: str, name: str) -> Optional[str]:
+    async def create_handoff_thread(self, parent_chat_id: str, name: str, *, metadata: Optional[dict[str, Any]] = None) -> Optional[str]:
         """Create a forum topic for a session handoff; ``message_thread_id`` as str, or None."""
         try:
             chat_id_int = int(parent_chat_id)

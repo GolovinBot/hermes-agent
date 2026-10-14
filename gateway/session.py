@@ -949,11 +949,9 @@ class SessionStore(
         """One routing transition for the single-flight owner. All blocking I/O (SQLite SELECTs,
         index rewrite + fsync, recovery queries) runs *outside* ``self._lock``, which protects
         only ``_entries`` / ``_loaded`` mutations."""
-        session_key = self._generate_session_key(source)
+        session_key = self.prepare_session_key(source)
         now = _now()
         if not force_new:
-            self._preserve_foreign_account_entry(source, session_key)
-            self._adopt_legacy_account_entry(source, session_key)
             self._adopt_legacy_slack_entry(source, session_key)
 
         # Phase 1 (lock): snapshot the entry for stale/reset checks.

@@ -2340,18 +2340,18 @@ class RelayAdapter(BasePlatformAdapter):
         self,
         parent_chat_id: str,
         name: str,
+        *, metadata: Optional[dict[str, Any]] = None,
     ) -> Optional[str]:
         """Create a thread/topic under ``parent_chat_id`` via the connector. One
-        `thread_create` op covers Discord (channel thread), Telegram (forum topic) and
-        Slack (named seed root message). None on any failure/unavailability so the
-        handoff watcher falls back to the parent."""
+        `thread_create` covers Discord, Telegram and Slack; None on failure/unavailability
+        makes the handoff watcher fall back to the parent."""
         result = await self._gated_op(
             str(parent_chat_id),
             {
                 "op": "thread_create",
                 "chat_id": str(parent_chat_id),
                 "thread_name": (str(name or "").strip() or "handoff")[:100],
-                "metadata": self._with_scope(str(parent_chat_id), None),
+                "metadata": self._with_scope(str(parent_chat_id), metadata),
             },
             decline_level=logging.INFO,
             subject=parent_chat_id,

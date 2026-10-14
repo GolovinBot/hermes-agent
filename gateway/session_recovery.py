@@ -116,6 +116,13 @@ class SessionRecoveryMixin:
         suffix = f":account~:{account}"
         return session_key[:-len(suffix)] if account and session_key.endswith(suffix) else None
 
+    def prepare_session_key(self, source: SessionSource) -> str:
+        """Resolve proven legacy account ownership before a source lane is read or reset."""
+        session_key = self._generate_session_key(source)
+        self._preserve_foreign_account_entry(source, session_key)
+        self._adopt_legacy_account_entry(source, session_key)
+        return session_key
+
     def _preserve_foreign_account_entry(self, source: SessionSource, session_key: str) -> None:
         """The runtime's own bot must not claim a legacy key belonging to another receiver."""
         from gateway.session_identity import transport_profile_of
