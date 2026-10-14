@@ -119,7 +119,12 @@ async def resolve_delivery_source(adapter, platform: str, chat_id: str, thread_i
         stored = {}
         import inspect
         scope = origin.get("scope_id") if same_chat else None
-        kwargs = {"scope_id": scope} if scope and "scope_id" in inspect.signature(adapter.get_chat_info).parameters else {}
+        parameters = inspect.signature(adapter.get_chat_info).parameters
+        kwargs = {"scope_id": scope} if scope and "scope_id" in parameters else {}
+        if "metadata" in parameters:
+            kwargs["metadata"] = {key: origin[key] for key in ("scope_id", "profile", "user_id")
+                                  if same_chat and origin.get(key)}
+            kwargs["metadata"]["platform"] = platform
         info = await adapter.get_chat_info(str(chat_id), **kwargs)
         if not isinstance(info, dict) or info.get("error"):
             raise ValueError("Adapter could not resolve the legacy cron conversation")

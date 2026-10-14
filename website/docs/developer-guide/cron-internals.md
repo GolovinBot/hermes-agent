@@ -54,6 +54,8 @@ rather than interpreting `main` as a promise that the profile is `default`.
 Slack workspace scope reaches thread creation as well as text and media sends. An unresolved
 conversation cannot open a continuation thread. A native standalone Slack sender checks
 token ownership with `auth.test` before submitting any payload to a scoped target.
+Relay metadata lookups and thread creation carry the known logical platform, scope, participant
+and multiplex runtime profile even after restart; capabilities use that platform's descriptor.
 Child processes recover a conversation by its exact key in their runtime SessionDB when the
 central gateway routing index is absent locally; reset boundaries and address/participant
 checks still apply.

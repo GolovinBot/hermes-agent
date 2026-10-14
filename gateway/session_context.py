@@ -113,8 +113,18 @@ def scoped_current_session_id(session_id: str | None = None) -> Iterator[None]:
 
 def source_route_metadata(source: Any, metadata: dict | None) -> dict | None:
     """Keep inbound route anchors for durable deliveries after the source is gone."""
-    anchors = {key: str(value) for key in ("scope_id", "parent_chat_id")
+    from gateway.session_identity import identity_of
+
+    anchors = {key: str(value) for key in ("scope_id", "parent_chat_id", "user_id")
                if (value := getattr(source, key, None))}
+    platform = getattr(source, "platform", None)
+    if platform:
+        anchors["platform"] = str(getattr(platform, "value", platform))
+    identity = identity_of(source)
+    if identity is not None and identity.multiplexed:
+        anchors["profile"] = identity.runtime_profile
+    elif identity is None and getattr(source, "profile", None):
+        anchors["profile"] = str(source.profile)
     return {**(metadata or {}), **anchors} if anchors else metadata
 
 
