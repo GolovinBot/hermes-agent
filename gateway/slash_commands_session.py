@@ -1111,7 +1111,8 @@ class GatewaySessionCommandsMixin:
             return None
         try:
             from gateway.session_context import source_route_metadata
-            thread_id = await adapter.create_handoff_thread(parent_id, title, metadata=source_route_metadata(source, None))
+            from gateway.platforms.base import _call_with_optional_metadata
+            thread_id = await _call_with_optional_metadata(adapter.create_handoff_thread, parent_id, title, metadata=source_route_metadata(source, None))
         except Exception:
             logger.warning("Branch: create_handoff_thread failed on %s; branching in place",
                            source.platform.value, exc_info=True)

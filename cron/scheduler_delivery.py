@@ -273,7 +273,8 @@ def _open_continuable_cron_thread(job: dict, adapter, chat_id: str, loop, *, met
     thread_name = f"Hermes — {_cron_display_name(job)}"
     try:
         from agent.async_utils import safe_schedule_threadsafe
-        coro = create_thread(str(chat_id), thread_name, metadata=metadata)
+        from gateway.platforms.base import _call_with_optional_metadata
+        coro = _call_with_optional_metadata(create_thread, str(chat_id), thread_name, metadata=metadata)
         future = safe_schedule_threadsafe(coro, loop)  # type: ignore[arg-type]
         if future is None:
             return None

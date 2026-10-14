@@ -1914,6 +1914,12 @@ def _lazy_attr(obj: Any, name: str, factory: Callable[[], Any]) -> Any:
 _strip_media_directives = _strip_media_tag_directives
 
 
+async def _call_with_optional_metadata(fn: Callable, *args, metadata=None):
+    kwargs = {"metadata": metadata} if metadata and BasePlatformAdapter._accepts_kwarg(
+        fn, "metadata", var_kw=True, unknown=False) else {}
+    return await fn(*args, **kwargs)
+
+
 class BasePlatformAdapter(ABC):
     """Base class for platform adapters: connect/auth, receive, send, handle media."""
 
@@ -2985,18 +2991,13 @@ class BasePlatformAdapter(ABC):
             params = inspect.signature(fn).parameters
         except (TypeError, ValueError):
             return unknown
-        return name in params or (var_kw and any(
+        parameter = params.get(name)
+        return (parameter is not None and parameter.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)) or (var_kw and any(
             p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()))
 
     async def _stop_typing_with_metadata(self, chat_id: str, metadata=None) -> None:
-        """Stop typing, forwarding ``metadata`` only if ``stop_typing`` accepts it (Slack AI
-        status is per thread, so dropping metadata could clear a sibling thread; introspecting
-        keeps legacy ``stop_typing(chat_id)`` adapters working)."""
-        if metadata and self._accepts_kwarg(
-                self.stop_typing, "metadata", var_kw=True, unknown=False):
-            await self.stop_typing(chat_id, metadata=metadata)
-            return
-        await self.stop_typing(chat_id)
+        """Keep thread-scoped status metadata without breaking legacy typing callbacks."""
+        await _call_with_optional_metadata(self.stop_typing, chat_id, metadata=metadata)
 
     async def send_multiple_images(
         self, chat_id: str, images: list[tuple[str, str]],
