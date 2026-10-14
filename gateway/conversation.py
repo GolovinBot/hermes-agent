@@ -25,7 +25,7 @@ class ConversationAddress:
 
 def conversation_kind(chat_type: str) -> str:
     # Old adapters used "thread" as a kind; topology now lives in the address.
-    kind = {"thread": "group", "forum": "group", "c2c": "dm", "guild": "group", "private": "dm"}.get(chat_type, chat_type)
+    kind = {"thread": "group", "forum": "group", "room": "channel", "c2c": "dm", "guild": "group", "private": "dm"}.get(chat_type, chat_type)
     if kind not in {"dm", "group", "channel"}:
         raise ValueError(f"Unknown conversation kind: {chat_type!r}")
     return kind
@@ -49,17 +49,22 @@ def conversation_origin(source, *, thread_id: Optional[str]) -> dict:
     from dataclasses import replace
 
     address = replace(address_of(source), thread_id=thread_id)
-    return {"version": 1, "address": asdict(address),
-            "kind": conversation_kind(source.conversation_kind or source.chat_type)}
+    kind = conversation_kind(source.conversation_kind or source.chat_type)
+    origin = {"version": 1, "address": asdict(address), "kind": kind}
+    if source.chat_type != kind:
+        origin["key_chat_type"] = source.chat_type
+    return origin
 
 
-def source_for_address(address: ConversationAddress, kind: str, **fields):
+def source_for_address(address: ConversationAddress, kind: str, *, key_chat_type=None, **fields):
     """Encode an address using existing adapter/key layouts, without guessing its kind."""
     from gateway.config import Platform
     from gateway.session import SessionSource
 
     kind = conversation_kind(kind)
-    chat_type = kind
+    chat_type = key_chat_type or kind
+    if (conversation_kind(chat_type) == "dm") != (kind == "dm"):
+        raise ValueError("Legacy key spelling cannot change DM isolation")
     chat_id = address.chat_id
     if address.thread_id and kind != "dm" and address.platform == "discord":
         chat_type, chat_id = "thread", address.thread_id
@@ -87,7 +92,7 @@ def receiving_adapter_for_origin(adapter, platform: str, chat_id: str, origin: d
         raise PermissionError("Cron conversation address disagrees with its delivery target")
     from gateway.session_identity import restore_identity
     source = source_for_address(address, captured["kind"], user_id=origin.get("user_id"),
-                                user_id_alt=origin.get("user_id_alt"))
+                                user_id_alt=origin.get("user_id_alt"), key_chat_type=captured.get("key_chat_type") or origin.get("chat_type"))
     restore_identity(source, runner=runner, transport_profile=address.account)
     receiving = runner._delivery_adapter_for(source)
     if receiving is None:
@@ -99,6 +104,7 @@ async def resolve_delivery_source(adapter, platform: str, chat_id: str, thread_i
     """Resolve a reply-facing source through the receiving adapter; ambiguous legacy origins refuse."""
     same_chat = (str(origin.get("platform", "")).lower() == platform
                  and str(origin.get("parent_chat_id") or origin.get("chat_id", "")) == str(chat_id))
+    resolved_thread_id = thread_id
     captured = origin.get("conversation") if same_chat else None
     if captured is not None:
         if not isinstance(captured, dict) or captured.get("version") != 1:
@@ -108,46 +114,56 @@ async def resolve_delivery_source(adapter, platform: str, chat_id: str, thread_i
             raise PermissionError("Cron conversation address disagrees with its delivery target")
         ConversationAddress(**stored)
         kind = conversation_kind(captured.get("kind"))
+        key_chat_type = captured.get("key_chat_type") or origin.get("chat_type")
     else:
         stored = {}
         import inspect
         scope = origin.get("scope_id") if same_chat else None
-        store = getattr(adapter, "_session_store", None)
-        entry = (existing_delivery_session(store, platform, chat_id, thread_id, origin)
-                 if store is not None else None)
-        if entry is not None:
+        kwargs = {"scope_id": scope} if scope and "scope_id" in inspect.signature(adapter.get_chat_info).parameters else {}
+        info = await adapter.get_chat_info(str(chat_id), **kwargs)
+        if not isinstance(info, dict) or info.get("error"):
+            raise ValueError("Adapter could not resolve the legacy cron conversation")
+        if info.get("type") not in (None, "unknown"):
+            kind = conversation_kind(info.get("type"))
+            key_chat_type = info.get("type")
+            stored["scope_id"] = scope or info.get("scope_id")
+            stored["scope_id"] = stored["scope_id"] or info.get("guild_id")
+            stored["chat_id"] = info.get("parent_chat_id") or info.get("chat_id") or str(chat_id)
+            resolved_thread_id = thread_id or info.get("thread_id")
+            if thread_id and info.get("thread_id") and str(thread_id) != str(info["thread_id"]):
+                raise PermissionError("Adapter conversation disagrees with the requested thread")
+        else:
+            store = getattr(adapter, "_session_store", None)
+            entry = (existing_delivery_session(store, platform, chat_id, thread_id, origin)
+                     if store is not None else None)
+            if entry is None:
+                raise ValueError("Adapter and durable state could not resolve the legacy cron conversation")
             stored = asdict(address_of(entry.origin))
             stored["account"] = entry.transport_profile
             kind = conversation_kind(entry.origin.conversation_kind or entry.origin.chat_type)
-        else:
-            kwargs = {"scope_id": scope} if scope and "scope_id" in inspect.signature(adapter.get_chat_info).parameters else {}
-            info = await adapter.get_chat_info(str(chat_id), **kwargs)
-            if not isinstance(info, dict) or info.get("error"):
-                raise ValueError("Adapter could not resolve the legacy cron conversation")
-            kind = conversation_kind(info.get("type"))
-            stored["scope_id"] = scope or info.get("scope_id")
+            key_chat_type = entry.origin.chat_type
     if platform == "slack" and not stored.get("scope_id"):
         raise ValueError("Cannot seed a Slack conversation without its workspace scope")
     address = ConversationAddress(
-        platform, str(chat_id), str(thread_id) if thread_id else None,
+        platform, stored.get("chat_id") or str(chat_id), str(resolved_thread_id) if resolved_thread_id else None,
         stored.get("scope_id") or (origin.get("scope_id") if same_chat else None),
         stored.get("profile") or (origin.get("profile") if same_chat else None),
         stored.get("account"),
     )
     return _canonical_delivery_source(
         adapter,
-        address, kind, user_id=origin.get("user_id") if same_chat else None,
+        address, kind, key_chat_type=key_chat_type, user_id=origin.get("user_id") if same_chat else None,
         user_id_alt=origin.get("user_id_alt") if same_chat else None,
         chat_name=origin.get("chat_name") if same_chat else None,
     )
 
 
-def _canonical_delivery_source(adapter, address, kind, **fields):
+def _canonical_delivery_source(adapter, address, kind, *, key_chat_type=None, **fields):
     from dataclasses import replace
     from gateway.session_identity import identity_of
 
     # A persisted runtime is an expectation, never an input that bypasses current routes.
-    source = source_for_address(replace(address, profile=None), kind, **fields)
+    source = source_for_address(replace(address, profile=None), kind, key_chat_type=key_chat_type, **fields)
     adapter._canonicalize(source)
     if source.profile_route_rejected:
         raise PermissionError("Cron conversation routes to an unserved profile")
@@ -166,7 +182,40 @@ def resolve_reply_source(adapter, source, thread_id):
     return _canonical_delivery_source(
         adapter, replace(address_of(source), thread_id=thread_id),
         source.conversation_kind or source.chat_type,
-        user_id=source.user_id, user_id_alt=source.user_id_alt, chat_name=source.chat_name)
+        key_chat_type=source.chat_type, user_id=source.user_id, user_id_alt=source.user_id_alt, chat_name=source.chat_name)
+
+
+def persisted_session_entry(store, session_key, platform):
+    """Read an exact durable lane without requiring the launch gateway's routing index."""
+    import json
+    from dataclasses import replace
+    from datetime import datetime
+    from gateway.session import SessionSource
+
+    entry = store.lookup_by_session_key(session_key)
+    if entry is not None and entry.origin is not None:
+        return entry if entry.origin.platform.value == platform else None
+    row = store._peer_row(store._db, source=platform, session_key=session_key, raise_on_lookup_error=True)
+    if not row or row.get("session_key") != session_key or not row.get("origin_json"):
+        return None
+    source = SessionSource.from_dict(json.loads(row["origin_json"]))
+    if source.platform.value != platform:
+        return None
+    entry = store._create_entry_from_recovered_row(row=row, session_key=session_key, source=source, now=datetime.now())
+    return replace(entry, transport_profile=row.get("transport_profile"))
+
+
+def _delivery_session_key(store, source, participant, participant_alt, account, profile):
+    from dataclasses import replace
+    from gateway.session import build_session_key
+
+    key = build_session_key(
+        replace(source, user_id=participant, user_id_alt=participant_alt),
+        store.config.group_sessions_per_user, store.config.thread_sessions_per_user,
+        profile=profile if store.config.multiplex_profiles else None)
+    if store.config.multiplex_profiles and account and profile and account != profile:
+        key += f":account~:{account}"
+    return key
 
 
 def existing_delivery_session(store, platform: str, chat_id: str, thread_id: Optional[str], origin: dict):
@@ -185,15 +234,27 @@ def existing_delivery_session(store, platform: str, chat_id: str, thread_id: Opt
             return None
     participant = (origin.get("user_id_alt") or origin.get("user_id")) if same_chat else None
     kind = captured.get("kind") if captured else (origin.get("chat_type") if same_chat else None)
+    entries = store.list_sessions()
+    if kind:
+        source = source_for_address(
+            ConversationAddress(platform, str(chat_id), thread_id, expected.get("scope_id"), expected.get("profile")),
+            kind, key_chat_type=captured.get("key_chat_type") if captured else origin.get("chat_type") if same_chat else None,
+            user_id=origin.get("user_id") if same_chat else None,
+            user_id_alt=origin.get("user_id_alt") if same_chat else None)
+        key = _delivery_session_key(store, source, source.user_id, source.user_id_alt,
+                                    expected.get("account"), expected.get("profile") or store._active_profile_name())
+        durable = persisted_session_entry(store, key, platform)
+        if durable is not None and not any(e.session_id == durable.session_id for e in entries):
+            entries.append(durable)
     candidates = []
-    for entry in store.list_sessions():
+    for entry in entries:
         source = entry.origin
         if source is None:
             continue
         address = address_of(source)
         if (address.platform, address.chat_id, address.thread_id) != (platform, str(chat_id), thread_id):
             continue
-        if kind and conversation_kind(kind) != conversation_kind(source.conversation_kind or source.chat_type):
+        if kind and (conversation_kind(kind) == "dm") != (conversation_kind(source.conversation_kind or source.chat_type) == "dm"):
             continue
         if expected.get("account") and entry.transport_profile != expected["account"]:
             continue
@@ -209,6 +270,18 @@ def existing_delivery_session(store, platform: str, chat_id: str, thread_id: Opt
         if source.chat_type != "dm" and not shared:
             if not participant or participant != (source.user_id_alt or source.user_id):
                 continue
+        key_type = ((captured.get("key_chat_type") or origin.get("chat_type")) if captured
+                    else origin.get("chat_type") if same_chat else None) or source.chat_type
+        from dataclasses import replace
+        reply_source = source_for_address(replace(address, profile=profile), kind or source.conversation_kind or source.chat_type,
+                                          key_chat_type=key_type)
+        key = _delivery_session_key(
+            store, reply_source, origin.get("user_id") if same_chat else None,
+            origin.get("user_id_alt") if same_chat else None, entry.transport_profile, profile)
+        legacy_key = key.removesuffix(f":account~:{entry.transport_profile}") if entry.transport_profile else None
+        if entry.session_key not in (key, legacy_key):
+            # A changed isolation policy does not authorize writing into the old lane.
+            continue
         candidates.append(entry)
     return candidates[0] if len(candidates) == 1 else None
 

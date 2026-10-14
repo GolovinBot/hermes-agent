@@ -86,3 +86,28 @@ async def test_matrix_membership_does_not_change_conversation_kind(adapter):
     adapter._client.state_store.get_members.return_value.append("bob")
     adapter._invalidate_room_identities(room)
     assert (await adapter.get_chat_info(room))["type"] == "group"
+
+
+@pytest.mark.asyncio
+async def test_legacy_matrix_dm_row_cannot_override_current_group_kind(adapter):
+    from gateway.session import SessionSource
+
+    adapter, gateway = adapter
+    room = "!room:example.org"
+    adapter._dm_rooms = {room: False}
+    stale = adapter._session_store.get_or_create_session(
+        SessionSource(Platform.MATRIX, room, chat_type="dm", user_id="@alice:example.org"))
+    adapter._session_store.append_to_transcript(stale.session_id, {"role": "assistant", "content": "old private history"})
+    job = {"id": "digest", "deliver": "origin", "attach_to_session": True,
+           "origin": {"platform": "matrix", "chat_id": room, "user_id": "@alice:example.org"}}
+    with patch("gateway.config.load_gateway_config", return_value=gateway):
+        error = await asyncio.to_thread(_deliver_result, job, "group brief", {Platform.MATRIX: adapter},
+                                        asyncio.get_running_loop())
+    assert error is None
+    event = await adapter._build_inbound_event(room, "@alice:example.org", "$reply", "continue", {},
+                                             {"rel_type": "m.thread", "event_id": "$root"})
+    reply = adapter._session_store.get_or_create_session(event.source)
+    assert reply.session_id != stale.session_id
+    transcript = adapter._session_store.load_transcript(reply.session_id)
+    assert any("group brief" in m.get("content", "") for m in transcript)
+    assert not any("old private history" in m.get("content", "") for m in transcript)

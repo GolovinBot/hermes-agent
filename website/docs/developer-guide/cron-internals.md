@@ -26,6 +26,8 @@ A conversation address contains the platform, receiving bot account, runtime pro
 or server scope, parent room/channel, and optional thread. Conversation kind (`dm`, `group`,
 `channel`) and the configured participant-isolation policy are separate from that address.
 `chat_type="thread"` remains a legacy adapter/key spelling, not a conversation kind.
+Snapshots retain `key_chat_type` when a legacy spelling (such as Feishu `forum` or LINE `room`)
+differs from the normalized kind; the reply-facing key keeps that layout without changing DM isolation.
 
 New gateway-created origins store a versioned `conversation` snapshot alongside the legacy flat
 fields. Cron resolves a reply-facing `SessionSource` and uses the same `SessionStore` and
@@ -54,6 +56,9 @@ token ownership with `auth.test` before submitting any payload to a scoped targe
 Child processes recover a conversation by its exact key in their runtime SessionDB when the
 central gateway routing index is absent locally; reset boundaries and address/participant
 checks still apply.
+The current participant may differ from the first participant stored in a shared conversation,
+but rebuilding under the current isolation policy must still prove the exact original key.
+Standalone mirrors use the same durable lookup when the launch gateway's index is elsewhere.
 
 Historical key spellings remain compatible. A shared receiving bot routed into another runtime
 adds `:account~:<transport_profile>` to distinguish it from that runtime's own bot. An exact legacy

@@ -5588,14 +5588,14 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
     async def get_chat_info(self, chat_id: str) -> dict[str, Any]:
         """Get information about a Telegram chat."""
         if not self._bot:
-            return {"name": "Unknown", "type": "dm"}
+            return {"name": "Unknown", "type": "unknown"}
         try:
             chat = await self._bot.get_chat(normalize_telegram_chat_id(chat_id))
             chat_type = "dm"
             if chat.type == ChatType.GROUP:
                 chat_type = "group"
             elif chat.type == ChatType.SUPERGROUP:
-                chat_type = "forum" if chat.is_forum else "group"
+                chat_type = "group"  # Forum topology is reported separately, as on ingress.
             elif chat.type == ChatType.CHANNEL:
                 chat_type = "channel"
             return {

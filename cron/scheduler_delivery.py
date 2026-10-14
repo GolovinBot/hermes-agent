@@ -221,14 +221,16 @@ def _maybe_mirror_cron_delivery(
     text = (mirror_text or "").strip()
     if not text:
         return
+    store = None
     try:
         from gateway.conversation import existing_delivery_session
         from gateway.config import load_gateway_config
         from gateway.session import SessionStore
         from gateway.mirror import mirror_to_session
         config = load_gateway_config()
+        store = SessionStore(config.sessions_dir, config)
         entry = existing_delivery_session(
-            SessionStore(config.sessions_dir, config),
+            store,
             platform_name, str(chat_id), thread_id, _resolve_origin(job) or {})
         if entry is None:
             logger.warning("Job '%s': no unambiguous continuation address for %s:%s thread=%s", job.get("id"), platform_name, chat_id, thread_id)
@@ -257,6 +259,9 @@ def _maybe_mirror_cron_delivery(
             "Job '%s': delivery mirror failed for %s:%s: %s", job.get("id", "?"), platform_name,
             chat_id, e,
         )
+    finally:
+        if store is not None:
+            store.close_all_db_handles()
 
 
 def _open_continuable_cron_thread(job: dict, adapter, chat_id: str, loop) -> Optional[str]:
@@ -1784,6 +1789,10 @@ def _prepare_target_delivery(
         except Exception as exc:
             logger.warning("Job '%s': conversation resolution refused for %s:%s: %s", job["id"], platform_name, chat_id, exc, exc_info=True)
     is_dm_target = session_source is not None and session_source.chat_type == "dm"
+    if session_source is not None:
+        from gateway.conversation import address_of
+        address = address_of(session_source)
+        chat_id, thread_id = address.chat_id, address.thread_id
     inchannel_continuable = session_source is not None and (origin_target or (
         mirror_this_target and _inchannel_seed_allowed(
             is_dm=is_dm_target, user_id=session_source.user_id_alt or session_source.user_id)))

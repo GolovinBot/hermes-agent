@@ -131,3 +131,28 @@ async def test_unobserved_conversation_never_guesses_kind_from_id(platform):
     adapter = cls(PlatformConfig(enabled=True))
     for chat_id in ("cidABC123", "groupLookingId"):
         assert (await adapter.get_chat_info(chat_id))["type"] == "unknown"
+
+
+def test_retry_spool_uses_the_target_profile_home(homes, monkeypatch):
+    import sqlite3
+    from cron.scheduler_sessions import _seed_cron_session
+    from gateway.session import SessionSource
+    from gateway.session_identity import RoutingIdentity
+
+    root, ops = homes
+    store = SessionStore(root / "sessions", GatewayConfig(multiplex_profiles=True))
+    source = SessionSource(Platform.SLACK, "D1", scope_id="T1", profile="ops")
+    source._identity = RoutingIdentity("default", "ops", root, ops)
+    entry = store.get_or_create_session(source)
+    db = store._db_for_key(entry.session_key)
+    def fail_append(**kwargs):
+        raise sqlite3.OperationalError("database is locked")
+    monkeypatch.setattr(db, "append_message", fail_append)
+    monkeypatch.setattr(store, "_MAX_PENDING_PER_SESSION", 1)
+    adapter = SimpleNamespace(_session_store=store)
+    for text in ("first brief", "second brief"):
+        assert _seed_cron_session({"id": "digest"}, adapter, "slack", "D1", text, thread_id=None,
+                                  chat_type="dm", user_id=None, chat_name=None, scope_id="T1", source=source)
+    assert list((ops / "pending_messages").glob("*.json"))
+    assert not (root / "pending_messages").exists()
+    store.close_all_db_handles()

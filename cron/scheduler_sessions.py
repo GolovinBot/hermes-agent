@@ -19,36 +19,40 @@ def _seed_cron_session(
     from gateway.config import Platform
     from gateway.conversation import ConversationAddress, source_for_address
     from gateway.session import is_shared_multi_user_session
+    from gateway.session_identity import identity_of
     from gateway.mirror import mirror_to_session
-    seeded_session_id: Optional[str] = None
+    from gateway.run import _profile_runtime_scope
+    from contextlib import nullcontext
+
     session_store = getattr(adapter, "_session_store", None)
-    if session_store is not None:
-        try:
-            platform_enum = Platform(platform_name.lower())
-        except (ValueError, KeyError):
-            platform_enum = None
-        if platform_enum is not None:
-            dest_source = source or source_for_address(
-                ConversationAddress(platform_name, str(chat_id), thread_id, scope_id), chat_type,
-                chat_name=chat_name, user_id=user_id, user_name=user_name)
-            config = session_store.config
-            shared = is_shared_multi_user_session(
-                dest_source, group_sessions_per_user=getattr(config, "group_sessions_per_user", True),
-                thread_sessions_per_user=getattr(config, "thread_sessions_per_user", False))
-            if dest_source.chat_type != "dm" and not shared and not (dest_source.user_id_alt or dest_source.user_id):
-                logger.warning("Job '%s': cannot seed a user-isolated conversation without its participant", job.get("id"))
-                return False
-            # Create the row and pass its exact id to the mirror — origin-heuristic rediscovery
-            # bails on populated chats.
-            _entry = session_store.get_or_create_session(dest_source)
-            seeded_session_id = getattr(_entry, "session_id", None)
-    if not seeded_session_id:
+    if session_store is None:
         return False
-    return mirror_to_session(
-        platform_name, str(chat_id), _cron_mirror_message(job, text),
-        source_label="cron", thread_id=thread_id, user_id=user_id, role="user",
-        session_id=seeded_session_id, session_store=session_store,
-    )
+    try:
+        Platform(platform_name.lower())
+    except (ValueError, KeyError):
+        return False
+    dest_source = source or source_for_address(
+        ConversationAddress(platform_name, str(chat_id), thread_id, scope_id), chat_type,
+        chat_name=chat_name, user_id=user_id, user_name=user_name)
+    config = session_store.config
+    shared = is_shared_multi_user_session(
+        dest_source, group_sessions_per_user=config.group_sessions_per_user,
+        thread_sessions_per_user=config.thread_sessions_per_user)
+    if dest_source.chat_type != "dm" and not shared and not (dest_source.user_id_alt or dest_source.user_id):
+        logger.warning("Job '%s': cannot seed a user-isolated conversation without its participant", job.get("id"))
+        return False
+    identity = identity_of(dest_source)
+    message = _cron_mirror_message(job, text)
+    # Reset policy and pending-message spools belong to the target, as well as its SQLite row.
+    scope = _profile_runtime_scope(identity.runtime_home) if identity is not None and identity.multiplexed else nullcontext()
+    with scope:
+        entry = session_store.get_or_create_session(dest_source)
+        session_id = getattr(entry, "session_id", None)
+        if not session_id:
+            return False
+        return mirror_to_session(
+            platform_name, str(chat_id), message, source_label="cron", thread_id=thread_id,
+            user_id=user_id, role="user", session_id=session_id, session_store=session_store)
 
 
 def _seed_cron_thread_session(
